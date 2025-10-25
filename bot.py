@@ -140,7 +140,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await date_selected_back(update, context)
         else:
             await update.message.reply_text(
-                "Пожалуйста, используйте кнопки ниже для навигаation",
+                "Пожалуйста, используйте кнопки ниже для навигации",
                 reply_markup=get_main_keyboard(user_id)
             )
 
@@ -1373,25 +1373,11 @@ def setup_job_queue(application: Application):
     # Периодическая очистка прошедших записей (каждые 30 минут)
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
 
-async def setup_webhook(application: Application):
-    """Настройка вебхука для Render"""
-    logger.info("Setting up webhook...")
+def setup_handlers(application):
+    """Настройка обработчиков для приложения"""
+    from telegram.ext import CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
     
-    if config.WEBHOOK_URL:
-        webhook_url = f"{config.WEBHOOK_URL}/8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
-        logger.info(f"Webhook URL: {webhook_url}")
-        
-        await application.bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True
-        )
-        logger.info("Webhook set successfully")
-    else:
-        logger.warning("WEBHOOK_URL not set, running in polling mode")
-    
-    # Настраиваем обработчики
-    setup_job_queue(application)
-    
+    # Создаем ConversationHandler для процесса записи
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(time_selected, pattern="^time_"),
@@ -1408,52 +1394,28 @@ async def setup_webhook(application: Application):
         ],
     )
     
+    # Добавляем все обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    # Запускаем планировщик задач
-    await application.job_queue.start()
-    logger.info("Job queue started")
+    # Настраиваем планировщик задач
+    setup_job_queue(application)
+    
+    logger.info("Bot handlers setup completed")
 
-def main_webhook():
-    """Основная функция для работы с вебхуком"""
+def main_polling():
+    """Основная функция для работы в режиме polling"""
     application = Application.builder().token(config.BOT_TOKEN).build()
     
-    # Настройка вебхука для Render
-    if config.WEBHOOK_URL:
-        print("Starting in WEBHOOK mode...")
-        asyncio.run(setup_webhook(application))
-    else:
-        # Локальный режим с поллингом
-        print("Starting in POLLING mode...")
-        setup_job_queue(application)
-        
-        # Создаем ConversationHandler для процесса записи с вводом телефона
-        conv_handler = ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(time_selected, pattern="^time_"),
-            ],
-            states={
-                PHONE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
-                    MessageHandler(filters.CONTACT, phone_input)
-                ],
-            },
-            fallbacks=[
-                MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
-                CommandHandler("start", start)
-            ],
-        )
-        
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(conv_handler)
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        application.add_handler(CallbackQueryHandler(button_handler))
-        
-        application.run_polling()
+    # Настраиваем обработчики
+    setup_handlers(application)
+    
+    # Запускаем в режиме polling
+    print("Starting bot in POLLING mode...")
+    application.run_polling()
 
 if __name__ == "__main__":
-    # Для обратной совместимости
-    main_webhook()
+    # Для локальной разработки используем polling
+    main_polling()
