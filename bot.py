@@ -867,7 +867,6 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     schedule = db.get_week_schedule()
     
-    # ИСПРАВЛЕНО: убрано название парикмахерской
     text = "🗓️ *График работы*\n\n"
     
     for weekday in range(7):
@@ -1080,7 +1079,7 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Правильное определение типа отмены
+    # Правильное определение типа отменя
     is_admin_cancel = query.data.startswith("cancel_admin_")
     
     if is_admin_cancel:
@@ -1137,7 +1136,6 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
     display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
     
     if is_admin:
-        # ИСПРАВЛЕНО: убран ID клиента
         text = (
             f"❌ *Администратор отменил запись в {config.BARBERSHOP_NAME}*\n\n"
             f"👤 Клиент: {user_name}\n"
@@ -1147,7 +1145,6 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
             f"⏰ Время: {time}"
         )
     else:
-        # ИСПРАВЛЕНО: убран ID клиента
         text = (
             f"❌ *Клиент отменил запись в {config.BARBERSHOP_NAME}*\n\n"
             f"👤 Клиент: {user_name}\n"
@@ -1179,7 +1176,6 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
     
     manual_indicator = " 📝 (ручная запись)" if is_manual else ""
     
-    # ИСПРАВЛЕННЫЙ ТЕКСТ УВЕДОМЛЕНИЯ
     text = (
         f"🆕 *Новая запись!*{manual_indicator}\n\n"
         f"👤 *Клиент:* {user_name}\n"
@@ -1403,19 +1399,4 @@ def setup_handlers(application):
     # Настраиваем планировщик задач
     setup_job_queue(application)
     
-    logger.info("Bot handlers setup completed")
-
-def main_polling():
-    """Основная функция для работы в режиме polling"""
-    application = Application.builder().token(config.BOT_TOKEN).build()
-    
-    # Настраиваем обработчики
-    setup_handlers(application)
-    
-    # Запускаем в режиме polling
-    print("Starting bot in POLLING mode...")
-    application.run_polling()
-
-if __name__ == "__main__":
-    # Для локальной разработки используем polling
-    main_polling()
+    logger.info("✅ Bot handlers setup completed")
