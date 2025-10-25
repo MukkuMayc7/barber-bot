@@ -3,6 +3,10 @@ import os
 import asyncio
 from aiohttp import web
 import logging
+import sys
+
+# Добавляем путь для импортов
+sys.path.append(os.path.dirname(__file__))
 
 # Настройка логирования
 logging.basicConfig(
@@ -11,26 +15,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def handle_webhook(request):
-    """Обработчик вебхука для Telegram"""
+# Глобальная переменная для бота
+bot_application = None
+
+async def init_bot():
+    """Инициализация бота один раз при старте"""
+    global bot_application
     try:
-        # Импортируем здесь чтобы избежать циклических импортов
-        from telegram import Update
         from telegram.ext import Application
+        import config
         
-        # Создаем приложение
-        bot_token = os.getenv('BOT_TOKEN', '8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE')
-        application = Application.builder().token(bot_token).build()
+        logger.info("Initializing Telegram bot...")
+        bot_application = Application.builder().token(config.BOT_TOKEN).build()
         
         # Настраиваем обработчики
         from bot import setup_handlers
-        setup_handlers(application)
+        setup_handlers(bot_application)
+        
+        # Настраиваем вебхук если указан URL
+        if config.WEBHOOK_URL:
+            webhook_url = f"{config.WEBHOOK_URL}/8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
+            logger.info(f"Setting webhook to: {webhook_url}")
+            await bot_application.bot.set_webhook(webhook_url, drop_pending_updates=True)
+            logger.info("Webhook set successfully!")
+        else:
+            logger.info("WEBHOOK_URL not set, running in webhook mode without webhook URL")
+            
+        logger.info("Bot initialized successfully!")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize bot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+async def handle_webhook(request):
+    """Обработчик вебхука от Telegram"""
+    global bot_application
+    
+    if bot_application is None:
+        logger.error("Bot not initialized!")
+        return web.Response(text="Bot not ready", status=503)
+    
+    try:
+        # Получаем данные обновления
+        data = await request.json()
+        from telegram import Update
+        update = Update.de_json(data, bot_application.bot)
         
         # Обрабатываем обновление
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-        
+        await bot_application.process_update(update)
         logger.info("Webhook processed successfully")
         return web.Response(text="OK", status=200)
         
@@ -40,10 +75,16 @@ async def handle_webhook(request):
 
 async def health_check(request):
     """Проверка здоровья приложения"""
-    return web.Response(text="Bot is running!")
+    status = "running" if bot_application else "initializing"
+    return web.Response(text=f"Bot is {status}!")
 
 async def init_app():
-    """Инициализация приложения"""
+    """Инициализация веб-приложения"""
+    logger.info("Initializing web application...")
+    
+    # Инициализируем бота
+    await init_bot()
+    
     app = web.Application()
     
     # Маршруты
@@ -51,7 +92,7 @@ async def init_app():
     app.router.add_get('/health', health_check)
     app.router.add_get('/', health_check)
     
-    logger.info("Web application initialized")
+    logger.info("Web application routes configured")
     return app
 
 if __name__ == '__main__':
@@ -63,7 +104,8 @@ if __name__ == '__main__':
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
-        logger.info(f"Server started on port {port}")
+        logger.info(f"🚀 Server started on port {port}")
+        logger.info("✅ Bot should be ready to receive webhooks!")
         
         # Бесконечный цикл
         while True:
