@@ -3,6 +3,7 @@ import os
 import asyncio
 from aiohttp import web
 import logging
+import sys
 
 # Настройка логирования
 logging.basicConfig(
@@ -11,26 +12,57 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def handle_webhook(request):
-    """Обработчик вебхука от Telegram"""
+# Глобальная переменная для бота
+application = None
+
+async def setup_bot():
+    """Настройка бота и вебхука"""
+    global application
     try:
-        # Динамический импорт чтобы избежать ошибок при старте
-        from telegram import Update
         from telegram.ext import Application
-        import config
+        from bot import setup_handlers
+        
+        BOT_TOKEN = os.getenv('BOT_TOKEN', '8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE')
+        WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://barber-bot-render.onrender.com')
+        
+        logger.info(f"🔧 Initializing bot with token: {BOT_TOKEN[:10]}...")
+        logger.info(f"🔧 Webhook URL: {WEBHOOK_URL}")
         
         # Создаем приложение
-        application = Application.builder().token(config.BOT_TOKEN).build()
+        application = Application.builder().token(BOT_TOKEN).build()
         
         # Настраиваем обработчики
-        from bot import setup_handlers
         setup_handlers(application)
         
-        # Обрабатываем обновление
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        # Настраиваем вебхук
+        webhook_url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+        await application.bot.set_webhook(webhook_url, drop_pending_updates=True)
+        logger.info(f"✅ Webhook set to: {webhook_url}")
         
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to setup bot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+async def handle_webhook(request):
+    """Обработчик вебхука от Telegram"""
+    global application
+    
+    if application is None:
+        logger.error("❌ Bot not initialized!")
+        return web.Response(text="Bot not ready", status=503)
+    
+    try:
+        # Получаем данные обновления
+        data = await request.json()
+        from telegram import Update
+        update = Update.de_json(data, application.bot)
+        
+        # Обрабатываем обновление
+        await application.process_update(update)
         logger.info("✅ Webhook processed successfully")
         return web.Response(text="OK", status=200)
         
@@ -40,37 +72,21 @@ async def handle_webhook(request):
 
 async def health_check(request):
     """Проверка здоровья приложения"""
-    return web.Response(text="Bot server is running!")
-
-async def setup_webhook():
-    """Настройка вебхука при старте"""
-    try:
-        from telegram.ext import Application
-        import config
-        
-        if config.WEBHOOK_URL:
-            application = Application.builder().token(config.BOT_TOKEN).build()
-            webhook_url = f"{config.WEBHOOK_URL}/8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
-            
-            await application.bot.set_webhook(webhook_url, drop_pending_updates=True)
-            logger.info(f"✅ Webhook set to: {webhook_url}")
-        else:
-            logger.warning("⚠️ WEBHOOK_URL not set")
-            
-    except Exception as e:
-        logger.error(f"❌ Failed to setup webhook: {e}")
+    status = "RUNNING" if application else "INITIALIZING"
+    return web.Response(text=f"Bot is {status}!")
 
 async def init_app():
     """Инициализация веб-приложения"""
     logger.info("🌐 Initializing web application...")
     
-    # Настраиваем вебхук при старте
-    await setup_webhook()
+    # Настраиваем бота
+    await setup_bot()
     
     app = web.Application()
     
     # Маршруты
-    app.router.add_post('/8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE', handle_webhook)
+    BOT_TOKEN = os.getenv('BOT_TOKEN', '8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE')
+    app.router.add_post(f'/{BOT_TOKEN}', handle_webhook)
     app.router.add_get('/health', health_check)
     app.router.add_get('/', health_check)
     
