@@ -1,4 +1,4 @@
-# app.py - SIMPLE WORKING VERSION
+# app.py - FULL FUNCTIONALITY VERSION
 import os
 import asyncio
 from aiohttp import web
@@ -8,48 +8,46 @@ import aiohttp
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Конфигурация - ВСТАВЛЯЕМ НАПРЯМУЮ
+# Конфигурация
 BOT_TOKEN = "8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
 WEBHOOK_URL = "https://barber-bot-render.onrender.com"
 WEBHOOK_PATH = f"/{BOT_TOKEN}"
 
-# Глобальная переменная для отслеживания состояния
+# Глобальные переменные
 bot_initialized = False
+application = None
 
 async def initialize_bot():
-    """Инициализация бота - ВСЕ В ОДНОЙ ФУНКЦИИ"""
-    global bot_initialized
+    """Инициализация полного функционала бота"""
+    global bot_initialized, application
     
     try:
-        logger.info("🚀 STARTING BOT INITIALIZATION...")
+        logger.info("🚀 INITIALIZING FULL BOT FUNCTIONALITY...")
         
-        # 1. Устанавливаем вебхук
-        setwebhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
-        webhook_data = {
-            "url": f"{WEBHOOK_URL}{WEBHOOK_PATH}",
-            "drop_pending_updates": True
-        }
+        # Импортируем необходимые модули
+        from telegram.ext import Application
+        from bot import setup_handlers
+        import database
         
-        logger.info(f"🔧 Setting webhook to: {WEBHOOK_URL}{WEBHOOK_PATH}")
+        # Инициализируем базу данных
+        db = database.Database()
+        logger.info("✅ DATABASE INITIALIZED")
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(setwebhook_url, data=webhook_data) as response:
-                result = await response.json()
-                if result.get('ok'):
-                    logger.info("✅ WEBHOOK SET SUCCESSFULLY!")
-                else:
-                    logger.error(f"❌ WEBHOOK FAILED: {result}")
-                    return False
+        # Создаем приложение бота
+        application = Application.builder().token(BOT_TOKEN).build()
+        logger.info("✅ BOT APPLICATION CREATED")
         
-        # 2. Проверяем что вебхук установился
-        getwebhook_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getWebhookInfo"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(getwebhook_url) as response:
-                status = await response.json()
-                logger.info(f"🔍 WEBHOOK STATUS: {status}")
+        # Настраиваем обработчики
+        setup_handlers(application)
+        logger.info("✅ BOT HANDLERS SETUP COMPLETED")
+        
+        # Устанавливаем вебхук
+        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+        await application.bot.set_webhook(webhook_url, drop_pending_updates=True)
+        logger.info(f"✅ WEBHOOK SET: {webhook_url}")
         
         bot_initialized = True
-        logger.info("🎉 BOT INITIALIZATION COMPLETED!")
+        logger.info("🎉 FULL BOT FUNCTIONALITY INITIALIZED!")
         return True
         
     except Exception as e:
@@ -59,64 +57,30 @@ async def initialize_bot():
         return False
 
 async def handle_webhook(request):
-    """Обработчик вебхука"""
-    global bot_initialized
+    """Обработчик вебхука с полным функционалом"""
+    global bot_initialized, application
     
-    if not bot_initialized:
-        logger.warning("⚠️ Bot not initialized, but received webhook")
+    if not bot_initialized or application is None:
+        logger.warning("⚠️ Bot not fully initialized")
         return web.Response(text="Bot initializing", status=503)
     
     try:
-        # Получаем данные
+        # Получаем данные обновления
         data = await request.json()
-        logger.info(f"📨 Received message")
         
-        # Простая обработка
-        if 'message' in data and 'text' in data['message']:
-            text = data['message']['text']
-            chat_id = data['message']['chat']['id']
-            
-            response_text = "❌ Бот не настроен"
-            
-            if text == '/start':
-                response_text = "🎉 БОТ РАБОТАЕТ! Вы отправили /start"
-            elif 'привет' in text.lower():
-                response_text = "👋 Привет! Я бот парикмахерской 'Бархат'"
-            else:
-                response_text = f"🤖 Вы написали: {text}"
-            
-            # Отправляем ответ
-            await send_telegram_message(chat_id, response_text)
+        # Обрабатываем через полную систему бота
+        from telegram import Update
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
         
+        logger.info("✅ WEBHOOK PROCESSED WITH FULL FUNCTIONALITY")
         return web.Response(text="OK")
         
     except Exception as e:
-        logger.error(f"❌ Webhook error: {e}")
+        logger.error(f"❌ Webhook processing error: {e}")
         return web.Response(text="Error", status=500)
 
-async def send_telegram_message(chat_id, text):
-    """Отправка сообщения в Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as response:
-                result = await response.json()
-                if result.get('ok'):
-                    logger.info(f"✅ Message sent to {chat_id}")
-                else:
-                    logger.error(f"❌ Failed to send message: {result}")
-                    
-    except Exception as e:
-        logger.error(f"❌ Send message error: {e}")
-
 async def health_check(request):
-    """Проверка здоровья"""
     status = "RUNNING" if bot_initialized else "INITIALIZING"
     return web.Response(text=f"Bot is {status}!")
 
@@ -124,10 +88,9 @@ async def init_app():
     """Инициализация приложения"""
     logger.info("🌐 INITIALIZING WEB APPLICATION...")
     
-    # Инициализируем бота СРАЗУ при старте
+    # Инициализируем полный функционал бота
     await initialize_bot()
     
-    # Создаем приложение
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
     app.router.add_get('/health', health_check)
@@ -146,11 +109,9 @@ if __name__ == '__main__':
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
         logger.info(f"🚀 SERVER STARTED ON PORT {port}")
-        logger.info("🎯 BOT IS READY FOR WEBHOOKS!")
+        logger.info("🎯 FULL BOT FUNCTIONALITY READY!")
         
-        # Бесконечный цикл
         while True:
             await asyncio.sleep(3600)
     
-    # Запускаем сервер
     asyncio.run(start_server())

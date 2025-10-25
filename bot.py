@@ -732,7 +732,7 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             await update.message.reply_text(
-                "📭 У вас нет записей для отмены",
+                "📭 У вас нет записей для отменя",
                 reply_markup=reply_markup
             )
         return
@@ -1079,7 +1079,7 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Правильное определение типа отменя
+    # Правильное определение типа отмены
     is_admin_cancel = query.data.startswith("cancel_admin_")
     
     if is_admin_cancel:
