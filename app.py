@@ -22,12 +22,16 @@ async def init_bot():
         from bot import setup_webhook
         import config
         
+        logger.info("Starting bot initialization...")
         application = Application.builder().token(config.BOT_TOKEN).build()
+        logger.info("Application created, setting up webhook...")
         await setup_webhook(application)
         logger.info("Bot initialized successfully with webhook")
         return True
     except Exception as e:
         logger.error(f"Error initializing bot: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 async def handle_webhook(request):
@@ -35,6 +39,7 @@ async def handle_webhook(request):
     global application
     
     if application is None:
+        logger.info("Application not initialized, initializing now...")
         success = await init_bot()
         if not success:
             return web.Response(text="Bot initialization failed", status=500)
@@ -47,9 +52,12 @@ async def handle_webhook(request):
         
         # Обрабатываем обновление
         await application.process_update(update)
+        logger.info("Webhook processed successfully")
         return web.Response(text="OK", status=200)
     except Exception as e:
         logger.error(f"Ошибка обработки вебхука: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return web.Response(text="Error", status=500)
 
 async def health_check(request):
@@ -58,6 +66,8 @@ async def health_check(request):
 
 async def init_app():
     """Инициализация приложения"""
+    logger.info("Initializing web application...")
+    
     # Инициализируем бота при старте
     await init_bot()
     
@@ -68,11 +78,13 @@ async def init_app():
     app.router.add_get('/health', health_check)
     app.router.add_get('/', health_check)
     
+    logger.info("Web application routes configured")
     return app
 
 if __name__ == '__main__':
     # Запуск сервера
     port = int(os.environ.get('PORT', 10000))
+    logger.info(f"Starting server on port {port}")
     
     async def start_server():
         app = await init_app()
@@ -80,8 +92,8 @@ if __name__ == '__main__':
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
-        print(f"Server started on port {port}")
-        print("Bot should be running with webhook...")
+        logger.info(f"Server started on port {port}")
+        logger.info("Bot should be running with webhook...")
         
         # Бесконечный цикл для поддержания работы
         while True:

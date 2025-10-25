@@ -31,3 +31,11 @@ CLEANUP_DAYS_OLD = 30
 # Настройки для Render
 PORT = int(os.getenv('PORT', 10000))
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', '')
+
+# Логирование настроек
+if WEBHOOK_URL:
+    print(f"WEBHOOK_URL configured: {WEBHOOK_URL}")
+else:
+    print("WEBHOOK_URL not set - running in polling mode")
+print(f"BOT_TOKEN: {BOT_TOKEN[:10]}...")
+print(f"ADMIN_IDS: {ADMIN_IDS}")

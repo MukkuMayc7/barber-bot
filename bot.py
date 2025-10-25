@@ -1,6 +1,7 @@
 # bot.py
 import logging
 import re
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -21,7 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 db = database.Database()
-
 
 def get_main_keyboard(user_id):
     """Создает основную клавиатуру под сообщением"""
@@ -45,14 +45,12 @@ def get_main_keyboard(user_id):
     
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
-
 def get_phone_keyboard():
     """Создает клавиатуру для ввода телефона"""
     return ReplyKeyboardMarkup([
         [KeyboardButton("📞 Отправить мой номер", request_contact=True)],
         [KeyboardButton("🔙 Назад")]
     ], resize_keyboard=True, one_time_keyboard=True)
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -91,7 +89,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений с кнопок"""
@@ -143,10 +140,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await date_selected_back(update, context)
         else:
             await update.message.reply_text(
-                "Пожалуйста, используйте кнопки ниже для навигации",
+                "Пожалуйста, используйте кнопки ниже для навигаation",
                 reply_markup=get_main_keyboard(user_id)
             )
-
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает главное меню"""
@@ -164,7 +160,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_keyboard(user_id),
             parse_mode='Markdown'
         )
-
 
 async def about_barbershop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обновленная информация о парикмахерской"""
@@ -196,7 +191,6 @@ async def about_barbershop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-
 async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику пользователей бота (только для администратора)"""
     user_id = update.effective_user.id
@@ -224,7 +218,6 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
-
 async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_TYPE, is_admin=False):
     """Начало процесса записи"""
     # Очищаем user_data при начале новой записи
@@ -249,7 +242,6 @@ async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text(text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
-
 
 async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора услуги"""
@@ -307,7 +299,6 @@ async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-
 def is_date_available(date, current_time, start_time, end_time, days_ahead):
     """Проверяет, доступна ли дата для записи с учетом текущего времени"""
     # Если это сегодня
@@ -326,7 +317,6 @@ def is_date_available(date, current_time, start_time, end_time, days_ahead):
             return False
     
     return True
-
 
 async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора даты"""
@@ -389,7 +379,6 @@ async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-
 def filter_available_slots(slots, current_time, start_time, end_time):
     """Фильтрует доступные слоты с учетом текущего времени"""
     filtered_slots = []
@@ -407,7 +396,6 @@ def filter_available_slots(slots, current_time, start_time, end_time):
                 filtered_slots.append(slot)
     
     return filtered_slots
-
 
 async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени - переходим к вводу телефона"""
@@ -443,7 +431,6 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return PHONE
-
 
 async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору даты при нажатии 'Назад' во время ввода телефона"""
@@ -491,7 +478,6 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     
     return ConversationHandler.END
-
 
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода номера телефона"""
@@ -619,7 +605,6 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-
 async def show_admin_manual_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи, внесенные администратором вручную"""
     user_id = update.effective_user.id
@@ -675,7 +660,6 @@ async def show_admin_manual_appointments(update: Update, context: ContextTypes.D
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-
 async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи текущего пользователя"""
     user_id = update.effective_user.id
@@ -723,7 +707,6 @@ async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-
 
 async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи для отмены"""
@@ -784,7 +767,6 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-
 async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает все записи с телефонами (администратор)"""
     user_id = update.effective_user.id
@@ -835,7 +817,6 @@ async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-
 async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи на сегодня с телефонами (администратор)"""
     user_id = update.effective_user.id
@@ -876,7 +857,6 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
-
 async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление графиком работы"""
     user_id = update.effective_user.id
@@ -915,7 +895,6 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline кнопок"""
@@ -964,7 +943,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "manage_schedule":
         await manage_schedule(update, context)
 
-
 async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора дня недели для настройки графика"""
     query = update.callback_query
@@ -999,7 +977,6 @@ async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=reply_markup
     )
 
-
 async def schedule_working_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора рабочего дня"""
     query = update.callback_query
@@ -1029,7 +1006,6 @@ async def schedule_working_selected(update: Update, context: ContextTypes.DEFAUL
         reply_markup=reply_markup
     )
 
-
 async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора выходного дня"""
     query = update.callback_query
@@ -1047,7 +1023,6 @@ async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
-
 
 async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени начала работы"""
@@ -1080,7 +1055,6 @@ async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=reply_markup
     )
 
-
 async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени окончания работы"""
     query = update.callback_query
@@ -1100,7 +1074,6 @@ async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
-
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
@@ -1130,7 +1103,6 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             await query.answer("Запись не найдена или у вас нет прав для её отмены", show_alert=True)
 
-
 async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, appointment):
     """Уведомляет клиента об отмене записи"""
     user_id, user_name, phone, service, date, time = appointment
@@ -1158,7 +1130,6 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
         logger.info(f"Уведомление об отмене отправлено клиенту {user_id}")
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления клиенту {user_id}: {e}")
-
 
 async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, appointment, cancelled_by_user_id, is_admin=False):
     """Уведомляет администраторов об отмене записи"""
@@ -1198,7 +1169,6 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления об отмене в чат {chat_id}: {e}")
 
-
 async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, user_name, user_username, phone, service, date, time, appointment_id, is_manual=False):
     """Отправляет уведомление о новой записи с номером телефона"""
     notification_chats = db.get_notification_chats()
@@ -1231,7 +1201,6 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления в чат {chat_id}: {e}")
 
-
 async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
     """Проверяет и уведомляет о дублирующихся записях"""
     duplicates = db.check_duplicate_appointments()
@@ -1257,7 +1226,6 @@ async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
             
             await send_admin_notification(context, text)
 
-
 async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
     """Отправляет уведомление всем администраторам"""
     notification_chats = db.get_notification_chats()
@@ -1272,7 +1240,6 @@ async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
             logger.info(f"Уведомление отправлено администратору в чат {chat_id}")
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления администратору в чат {chat_id}: {e}")
-
 
 def is_valid_phone(phone):
     """Проверяет валидность номера телефона"""
@@ -1291,7 +1258,6 @@ def is_valid_phone(phone):
     
     return False
 
-
 def normalize_phone(phone):
     """Нормализует номер телефона к формату +7XXXXXXXXXX"""
     # Убираем все нецифровые символы
@@ -1305,7 +1271,6 @@ def normalize_phone(phone):
         return '+7' + cleaned
     else:
         return phone
-
 
 async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Отправка напоминаний клиентам"""
@@ -1346,7 +1311,6 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
 
-
 async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
     """Отправка ежедневного расписания администраторам"""
     # Сначала очищаем прошедшие записи
@@ -1381,7 +1345,6 @@ async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
 
-
 async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная проверка дублирующихся записей"""
     # Сначала очищаем прошедшие записи
@@ -1392,14 +1355,12 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     
     await check_duplicate_appointments(context)
 
-
 async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
     """Периодическая очистка прошедших записей (каждые 30 минут)"""
     cleanup_result = db.cleanup_completed_appointments()
     
     if cleanup_result['total_deleted'] > 0:
         logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
-
 
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
@@ -1412,49 +1373,21 @@ def setup_job_queue(application: Application):
     # Периодическая очистка прошедших записей (каждые 30 минут)
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
 
-
-def main():
-    application = Application.builder().token(config.BOT_TOKEN).build()
-    
-    # Создаем ConversationHandler для процесса записи с вводом телефона
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(time_selected, pattern="^time_"),
-        ],
-        states={
-            PHONE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
-                MessageHandler(filters.CONTACT, phone_input)
-            ],
-        },
-        fallbacks=[
-            MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
-            CommandHandler("start", start)
-        ],
-    )
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    setup_job_queue(application)
-    application.run_polling()
-
-
-if __name__ == "__main__":
-    main()
-
-# ДОБАВЬТЕ ЭТОТ КОД В САМЫЙ КОНЕЦ ФАЙЛА bot.py
-
-import asyncio
-
 async def setup_webhook(application: Application):
     """Настройка вебхука для Render"""
-    await application.bot.set_webhook(
-        url=f"{config.WEBHOOK_URL}/{config.BOT_TOKEN}",
-        drop_pending_updates=True
-    )
+    logger.info("Setting up webhook...")
+    
+    if config.WEBHOOK_URL:
+        webhook_url = f"{config.WEBHOOK_URL}/8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
+        logger.info(f"Webhook URL: {webhook_url}")
+        
+        await application.bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True
+        )
+        logger.info("Webhook set successfully")
+    else:
+        logger.warning("WEBHOOK_URL not set, running in polling mode")
     
     # Настраиваем обработчики
     setup_job_queue(application)
@@ -1482,6 +1415,7 @@ async def setup_webhook(application: Application):
     
     # Запускаем планировщик задач
     await application.job_queue.start()
+    logger.info("Job queue started")
 
 def main_webhook():
     """Основная функция для работы с вебхуком"""
