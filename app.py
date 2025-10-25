@@ -25,7 +25,7 @@ async def init_bot():
         from telegram.ext import Application
         import config
         
-        logger.info("Initializing Telegram bot...")
+        logger.info("🚀 INITIALIZING TELEGRAM BOT...")
         bot_application = Application.builder().token(config.BOT_TOKEN).build()
         
         # Настраиваем обработчики
@@ -35,17 +35,17 @@ async def init_bot():
         # Настраиваем вебхук если указан URL
         if config.WEBHOOK_URL:
             webhook_url = f"{config.WEBHOOK_URL}/8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
-            logger.info(f"Setting webhook to: {webhook_url}")
+            logger.info(f"🔗 SETTING WEBHOOK TO: {webhook_url}")
             await bot_application.bot.set_webhook(webhook_url, drop_pending_updates=True)
-            logger.info("Webhook set successfully!")
+            logger.info("✅ WEBHOOK SET SUCCESSFULLY!")
         else:
-            logger.info("WEBHOOK_URL not set, running in webhook mode without webhook URL")
+            logger.warning("⚠️ WEBHOOK_URL NOT SET")
             
-        logger.info("Bot initialized successfully!")
+        logger.info("✅ BOT INITIALIZED SUCCESSFULLY!")
         return True
         
     except Exception as e:
-        logger.error(f"Failed to initialize bot: {e}")
+        logger.error(f"❌ FAILED TO INITIALIZE BOT: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return False
@@ -55,7 +55,7 @@ async def handle_webhook(request):
     global bot_application
     
     if bot_application is None:
-        logger.error("Bot not initialized!")
+        logger.error("❌ BOT NOT INITIALIZED!")
         return web.Response(text="Bot not ready", status=503)
     
     try:
@@ -66,24 +66,24 @@ async def handle_webhook(request):
         
         # Обрабатываем обновление
         await bot_application.process_update(update)
-        logger.info("Webhook processed successfully")
+        logger.info("📨 WEBHOOK PROCESSED SUCCESSFULLY")
         return web.Response(text="OK", status=200)
         
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error(f"❌ ERROR PROCESSING WEBHOOK: {e}")
         return web.Response(text="Error", status=500)
 
 async def health_check(request):
     """Проверка здоровья приложения"""
-    status = "running" if bot_application else "initializing"
+    status = "RUNNING" if bot_application else "INITIALIZING"
     return web.Response(text=f"Bot is {status}!")
 
 async def init_app():
     """Инициализация веб-приложения"""
-    logger.info("Initializing web application...")
+    logger.info("🌐 INITIALIZING WEB APPLICATION...")
     
     # Инициализируем бота
-    await init_bot()
+    success = await init_bot()
     
     app = web.Application()
     
@@ -92,7 +92,11 @@ async def init_app():
     app.router.add_get('/health', health_check)
     app.router.add_get('/', health_check)
     
-    logger.info("Web application routes configured")
+    if success:
+        logger.info("✅ WEB APPLICATION READY")
+    else:
+        logger.error("❌ WEB APPLICATION INITIALIZATION FAILED")
+    
     return app
 
 if __name__ == '__main__':
@@ -104,8 +108,8 @@ if __name__ == '__main__':
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
-        logger.info(f"🚀 Server started on port {port}")
-        logger.info("✅ Bot should be ready to receive webhooks!")
+        logger.info(f"🚀 SERVER STARTED ON PORT {port}")
+        logger.info("🎯 BOT IS READY TO RECEIVE WEBHOOKS!")
         
         # Бесконечный цикл
         while True:
