@@ -1,4 +1,4 @@
-# config.py
+# config.py - FIXED VERSION
 import os
 from dotenv import load_dotenv
 

@@ -1,4 +1,4 @@
-# render.yaml
+# render.yaml - FIXED VERSION
 services:
   - type: web
     name: barbershop-bot
@@ -9,4 +9,8 @@ services:
     startCommand: python app.py
     envVars:
       - key: BOT_TOKEN
-        sync: false
+        value: "8297051179:AAGHxFTyY2ourq2qmORND-oBN5TaKVYM0uE"
+      - key: ADMIN_IDS
+        value: "156901976"
+      - key: WEBHOOK_URL
+        value: "https://barber-bot-render.onrender.com"

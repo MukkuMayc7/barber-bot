@@ -1,4 +1,4 @@
-# app.py - FULL FUNCTIONALITY VERSION
+# app.py - FIXED VERSION FOR RENDER
 import os
 import asyncio
 from aiohttp import web
@@ -88,9 +88,6 @@ async def init_app():
     """Инициализация приложения"""
     logger.info("🌐 INITIALIZING WEB APPLICATION...")
     
-    # Инициализируем полный функционал бота
-    await initialize_bot()
-    
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
     app.router.add_get('/health', health_check)
@@ -99,19 +96,32 @@ async def init_app():
     logger.info("✅ WEB APPLICATION READY")
     return app
 
+async def start_background_tasks(app):
+    """Запуск фоновых задач"""
+    # Инициализируем бота в фоне
+    asyncio.create_task(initialize_bot())
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     
-    async def start_server():
+    async def main():
         app = await init_app()
+        
+        # Запускаем фоновые задачи
+        await start_background_tasks(app)
+        
+        # Запускаем сервер
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
-        logger.info(f"🚀 SERVER STARTED ON PORT {port}")
-        logger.info("🎯 FULL BOT FUNCTIONALITY READY!")
         
+        logger.info(f"🚀 SERVER STARTED ON PORT {port}")
+        logger.info("🎯 BOT IS READY TO RECEIVE REQUESTS!")
+        
+        # Бесконечный цикл для поддержания работы сервера
         while True:
             await asyncio.sleep(3600)
     
-    asyncio.run(start_server())
+    # Запускаем приложение
+    asyncio.run(main())
