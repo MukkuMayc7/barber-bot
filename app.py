@@ -1,4 +1,4 @@
-# app.py - OPTIMIZED VERSION FOR RENDER
+# app.py - COMPATIBLE WITH PTB 13.15
 import os
 import asyncio
 from aiohttp import web
@@ -24,7 +24,7 @@ async def initialize_bot():
         logger.info("🚀 STARTING BOT INITIALIZATION...")
         
         # Импорты внутри функции чтобы избежать циклических зависимостей
-        from telegram.ext import Application
+        from telegram.ext import Updater
         import database
         from bot import setup_handlers
         
@@ -33,9 +33,9 @@ async def initialize_bot():
         db = database.Database()
         logger.info("✅ Database initialized")
         
-        # Создаем приложение бота
+        # Создаем приложение бота (для версии 13.15 используем Updater)
         logger.info("🤖 Creating bot application...")
-        application = Application.builder().token(BOT_TOKEN).build()
+        application = Updater(token=BOT_TOKEN, use_context=True)
         logger.info("✅ Bot application created")
         
         # Настраиваем обработчики
@@ -45,8 +45,8 @@ async def initialize_bot():
         
         # Устанавливаем вебхук
         logger.info("🌐 Setting webhook...")
-        await application.bot.set_webhook(
-            f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+        application.bot.set_webhook(
+            url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
             drop_pending_updates=True
         )
         logger.info(f"✅ Webhook set: {WEBHOOK_URL}{WEBHOOK_PATH}")
@@ -71,7 +71,11 @@ async def handle_webhook(request):
         data = await request.json()
         from telegram import Update
         update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        
+        # Для версии 13.15 используем process_update через dispatcher
+        application.dispatcher.process_update(update)
+        
+        logger.info("✅ Webhook processed successfully")
         return web.Response(text="OK")
     except Exception as e:
         logger.error(f"Webhook error: {e}")
