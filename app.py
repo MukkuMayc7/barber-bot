@@ -1,4 +1,4 @@
-# app.py - FIXED VERSION WITH ERROR HANDLING
+# app.py - FIXED VERSION
 import os
 import asyncio
 from aiohttp import web
@@ -26,30 +26,35 @@ async def initialize_bot():
         db = database.Database()
         logger.info("✅ Database OK")
         
-        # 2. Telegram бот
+        # 2. Telegram бот с правильной инициализацией
         logger.info("🤖 Testing Telegram bot...")
         from telegram.ext import Application
         application = Application.builder().token(BOT_TOKEN).build()
-        logger.info("✅ Telegram bot OK")
+        logger.info("✅ Telegram bot created")
         
-        # 3. Обработчики
-        logger.info("⚙️ Setting up handlers...")
+        # 3. ИНИЦИАЛИЗАЦИЯ приложения перед использованием
+        logger.info("⚙️ Initializing application...")
+        await application.initialize()
+        logger.info("✅ Application initialized")
+        
+        # 4. Обработчики
+        logger.info("🛠️ Setting up handlers...")
         from bot import setup_handlers
         setup_handlers(application)
         logger.info("✅ Handlers setup OK")
         
-        # 4. Вебхук (с обработкой ошибок)
+        # 5. Запуск приложения
+        logger.info("🎯 Starting application...")
+        await application.start()
+        logger.info("✅ Application started")
+        
+        # 6. Вебхук
         logger.info("🌐 Setting webhook...")
-        try:
-            await application.bot.set_webhook(
-                url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
-                drop_pending_updates=True
-            )
-            logger.info("✅ Webhook set successfully")
-        except Exception as e:
-            logger.error(f"❌ Webhook failed: {e}")
-            # Продолжаем даже если вебхук не установился
-            logger.info("🔄 Continuing without webhook...")
+        await application.bot.set_webhook(
+            url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+            drop_pending_updates=True
+        )
+        logger.info("✅ Webhook set successfully")
         
         bot_initialized = True
         logger.info("🎉 Bot fully initialized!")
