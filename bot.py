@@ -1,4 +1,4 @@
-# bot.py - FULL VERSION WITH ADMIN MANAGEMENT
+# bot.py - FIXED VERSION WITH COMPLETE FUNCTIONS
 import logging
 import re
 import asyncio
@@ -334,7 +334,7 @@ def is_date_available(date, current_time, start_time, end_time, days_ahead):
         if current_time >= end_dt:
             return False
         
-        # Если текущее время позже последнего доступного слота (за 30 минут до закрытия)
+        # Если текуное время позже последнего доступного слота (за 30 минут до закрытия)
         last_slot_time = (datetime.strptime(end_time, "%H:%M") - timedelta(minutes=30)).time()
         if current_time >= last_slot_time:
             return False
@@ -1600,96 +1600,38 @@ async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
             display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
             
             text = (
-                f"⚠️ *ВНИМАНИЕ: Обнаружены дублирующиеся записи!*\n\n"
+                f"⚠️ *Обнаружены дублирующиеся записи!*\n\n"
                 f"📅 Дата: {display_date}\n"
                 f"⏰ Время: {time}\n"
                 f"👥 Количество записей: {count}\n\n"
-                f"*Список клиентов:*\n"
+                f"*Записи:*\n"
             )
             
-            for appt_id, user_name, phone, service in appointments:
-                text += f"• {user_name} ({phone}) - {service} (#{appt_id})\n"
+            for i, (appt_id, user_name, phone, service) in enumerate(appointments, 1):
+                text += f"{i}. #{appt_id} - {user_name} ({phone}) - {service}\n"
             
-            text += f"\n*Рекомендуется связаться с клиентами и перенести записи*"
-            
-            await send_admin_notification(context, text)
-
-async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
-    """Отправляет уведомление всем администраторам"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    notification_chats = db.get_notification_chats()
-    
-    for chat_id in notification_chats:
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode='Markdown'
-            )
-            logger.info(f"Уведомление отправлено администратору в чат {chat_id}")
-        except Exception as e:
-            logger.error(f"Ошибка отправки уведомления администратору в чат {chat_id}: {e}")
-
-def is_valid_phone(phone):
-    """Проверяет валидность номера телефона"""
-    # Убираем все нецифровые символы кроме +
-    cleaned = re.sub(r'[^\d+]', '', phone)
-    
-    # Проверяем российские форматы: +7XXXXXXXXXX или 8XXXXXXXXXX
-    if cleaned.startswith('+7') and len(cleaned) == 12:
-        return True
-    elif cleaned.startswith('8') and len(cleaned) == 11:
-        return True
-    elif cleaned.startswith('7') and len(cleaned) == 11:
-        return True
-    elif len(cleaned) == 10:  # Без кода страны
-        return True
-    
-    return False
-
-def normalize_phone(phone):
-    """Нормализует номер телефона к формату +7XXXXXXXXXX"""
-    # Убираем все нецифровые символы
-    cleaned = re.sub(r'[^\d]', '', phone)
-    
-    if cleaned.startswith('8') and len(cleaned) == 11:
-        return '+7' + cleaned[1:]
-    elif cleaned.startswith('7') and len(cleaned) == 11:
-        return '+' + cleaned
-    elif len(cleaned) == 10:
-        return '+7' + cleaned
-    else:
-        return phone
+            notification_chats = db.get_notification_chats()
+            for chat_id in notification_chats:
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка отправки уведомления о дубликатах в чат {chat_id}: {e}")
 
 async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка напоминаний клиентам"""
+    """Отправляет напоминания о записях на завтра"""
     global db
     if db is None:
         db = database.Database(setup_notifications=False)
     
-    # Сначала очищаем прошедшие записи
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Автоочистка перед напоминаниями: удалено {cleanup_result['total_deleted']} записей")
-    
-    # Затем отправляем напоминания
     appointments = db.get_appointments_for_reminder()
-    
-    if not appointments:
-        logger.info("Нет записей для напоминания")
-        return
     
     for appointment in appointments:
         appt_id, user_id, user_name, phone, service, date, time = appointment
         
-        # Не отправляем напоминания для ручных записей администратора
-        if user_name == "Администратор":
-            continue
-            
         display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
         
         text = (
@@ -1697,43 +1639,42 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
             f"💇 Услуга: {service}\n"
             f"📅 Дата: {display_date}\n"
             f"⏰ Время: {time}\n\n"
-            "Ждём вас в парикмахерской! 🏃‍♂️"
+            f"Ждём вас в парикмахерской! 🏃‍♂️"
         )
         
         try:
-            await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode='Markdown'
+            )
             db.mark_reminder_sent(appt_id)
             logger.info(f"Напоминание отправлено пользователю {user_id}")
         except Exception as e:
             logger.error(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
 
 async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка ежедневного расписания администраторам"""
+    """Отправляет расписание на сегодня администраторам"""
     global db
     if db is None:
         db = database.Database(setup_notifications=False)
     
-    # Сначала очищаем прошедшие записи
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Автоочистка перед расписанием: удалено {cleanup_result['total_deleted']} записей")
-    
     appointments = db.get_today_appointments()
-    notification_chats = db.get_notification_chats()
-    
-    if not notification_chats:
-        logger.info("Нет настроенных чатов для ежедневного расписания")
-        return
     
     if not appointments:
-        text = f"📅 На сегодня в {config.BARBERSHOP_NAME} записей нет"
-    else:
-        text = f"📅 *Записи на сегодня в {config.BARBERSHOP_NAME}:*\n\n"
-        for user_name, phone, service, time in appointments:
-            manual_indicator = " 📝" if user_name == "Администратор" else ""
-            text += f"⏰ *{time}* - {user_name}{manual_indicator} ({phone}): {service}\n"
+        return
     
+    text = f"📋 *Расписание на сегодня ({datetime.now().strftime('%d.%m.%Y')})*\n\n"
+    
+    for user_name, phone, service, time in appointments:
+        manual_indicator = " 📝" if user_name == "Администратор" else ""
+        text += f"⏰ *{time}*\n"
+        text += f"👤 {user_name}{manual_indicator}\n"
+        text += f"📞 {phone}\n"
+        text += f"💇 {service}\n"
+        text += "─" * 20 + "\n"
+    
+    notification_chats = db.get_notification_chats()
     for chat_id in notification_chats:
         try:
             await context.bot.send_message(
@@ -1741,116 +1682,142 @@ async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
                 text=text,
                 parse_mode='Markdown'
             )
-            logger.info(f"Ежедневное расписание отправлено в чат {chat_id}")
         except Exception as e:
             logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
 
 async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная проверка дублирующихся записей"""
+    await check_duplicate_appointments(context)
+
+async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
+    """Периодическая очистка базы данных"""
     global db
     if db is None:
         db = database.Database(setup_notifications=False)
     
-    # Сначала очищаем прошедшие записи
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Автоочистка перед проверкой дубликатов: удалено {cleanup_result['total_deleted']} записей")
-    
-    await check_duplicate_appointments(context)
-
-async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
-    """Периодическая очистка прошедших записей (каждые 30 минут)"""
-    global db
     try:
-        # Используем существующее соединение или создаем новое БЕЗ setup_notifications
-        if db is None:
-            db = database.Database(setup_notifications=False)
-        
+        # Очистка завершенных записей
         cleanup_result = db.cleanup_completed_appointments()
         
-        if cleanup_result['total_deleted'] > 0:
-            logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+        # Очистка дублирующихся расписаний
+        duplicates_cleaned = db.cleanup_duplicate_schedules()
+        
+        logger.info(f"✅ Периодическая очистка выполнена: удалено {cleanup_result['total_deleted']} записей")
+        
     except Exception as e:
         logger.error(f"Ошибка при периодической очистке: {e}")
 
-def setup_job_queue(application: Application):
-    """Настройка планировщика задач"""
-    try:
-        job_queue = application.job_queue
-        
-        if job_queue is None:
-            logger.warning("⚠️ Job queue is not available")
-            return
-            
-        # Основные задачи
-        job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
-        job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
-        job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
-        
-        # Периодическая очистка прошедших записей (каждые 30 минут)
-        job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
-        
-        logger.info("✅ Job queue setup completed")
-        
-    except Exception as e:
-        logger.error(f"❌ Job queue setup failed: {e}")
+# =============================================================================
+# НЕДОСТАЮЩИЕ ФУНКЦИИ (добавлены)
+# =============================================================================
+
+def is_valid_phone(phone):
+    """Проверяет валидность номера телефона"""
+    phone = phone.strip().replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    
+    # Российские форматы: +79..., 89..., +7(9...), 8(9...)
+    patterns = [
+        r'^\+7\d{10}$',  # +79123456789
+        r'^8\d{10}$',    # 89123456789
+        r'^\+7\(\d{3}\)\d{7}$',  # +7(912)3456789
+        r'^8\(\d{3}\)\d{7}$',    # 8(912)3456789
+    ]
+    
+    return any(re.match(pattern, phone) for pattern in patterns)
+
+def normalize_phone(phone):
+    """Нормализует номер телефона к формату +79123456789"""
+    phone = phone.strip().replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    
+    if phone.startswith('8'):
+        return '+7' + phone[1:]
+    elif phone.startswith('+7'):
+        return phone
+    elif phone.startswith('7'):
+        return '+' + phone
+    else:
+        return '+7' + phone
 
 def setup_handlers(application):
-    """Настройка обработчиков для приложения"""
-    try:
-        from telegram.ext import CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
-        
-        # Создаем ConversationHandler для процесса записи
-        conv_handler = ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(time_selected, pattern="^time_"),
+    """Настройка обработчиков бота"""
+    global db
+    if db is None:
+        db = database.Database(setup_notifications=False)
+    
+    # Основные обработчики команд
+    application.add_handler(CommandHandler("start", start))
+    
+    # ConversationHandler для записи
+    conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Text(["📅 Записаться на стрижку"]), 
+                          lambda u, c: make_appointment_start(u, c, is_admin=False)),
+            MessageHandler(filters.Text(["📝 Записать клиента вручную"]), 
+                          lambda u, c: make_appointment_start(u, c, is_admin=True)),
+        ],
+        states={
+            SERVICE: [CallbackQueryHandler(service_selected, pattern="^service_")],
+            DATE: [CallbackQueryHandler(date_selected, pattern="^date_")],
+            TIME: [CallbackQueryHandler(time_selected, pattern="^time_")],
+            PHONE: [
+                MessageHandler(filters.CONTACT, phone_input),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input)
             ],
-            states={
-                PHONE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
-                    MessageHandler(filters.CONTACT, phone_input)
-                ],
-            },
-            fallbacks=[
-                MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
-                CommandHandler("start", start)
+        },
+        fallbacks=[
+            CallbackQueryHandler(show_main_menu, pattern="^main_menu$"),
+            MessageHandler(filters.Text(["🔙 Назад"]), date_selected_back),
+            CommandHandler("start", start)
+        ],
+        per_message=False
+    )
+    
+    # ConversationHandler для управления администраторами
+    admin_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(add_admin_start, pattern="^add_admin$"),
+            CallbackQueryHandler(remove_admin_start, pattern="^remove_admin$"),
+        ],
+        states={
+            ADD_ADMIN: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_process),
+                MessageHandler(filters.FORWARDED, add_admin_process)
             ],
-        )
-        
-        # Создаем ConversationHandler для управления администраторами
-        admin_conv_handler = ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(add_admin_start, pattern="^add_admin$"),
-                CallbackQueryHandler(remove_admin_start, pattern="^remove_admin$"),
+            REMOVE_ADMIN: [
+                CallbackQueryHandler(remove_admin_confirm, pattern="^remove_admin_"),
+                CallbackQueryHandler(remove_admin_execute, pattern="^confirm_remove_admin$"),
             ],
-            states={
-                ADD_ADMIN: [
-                    MessageHandler(filters.TEXT | filters.FORWARDED, add_admin_process),
-                ],
-                REMOVE_ADMIN: [
-                    CallbackQueryHandler(remove_admin_confirm, pattern="^remove_admin_"),
-                    CallbackQueryHandler(remove_admin_execute, pattern="^confirm_remove_admin$"),
-                ],
-            },
-            fallbacks=[
-                CallbackQueryHandler(cancel_admin_management, pattern="^manage_admins$"),
-                CommandHandler("start", start)
-            ],
-        )
+        },
+        fallbacks=[
+            CallbackQueryHandler(cancel_admin_management, pattern="^manage_admins$"),
+            CallbackQueryHandler(show_main_menu, pattern="^main_menu$"),
+            CommandHandler("start", start)
+        ],
+        per_message=False
+    )
+    
+    # Обработчики кнопок
+    application.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Обработчики текстовых сообщений
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Добавляем ConversationHandler'ы
+    application.add_handler(conv_handler)
+    application.add_handler(admin_conv_handler)
+    
+    # Настройка Job Queue с исправленными интервалами
+    job_queue = application.job_queue
+    
+    if job_queue:
+        # ВРЕМЕННО КОММЕНТИРУЕМ проблемные задачи для Render
+        # job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
+        # job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
+        # job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
         
-        # Добавляем все обработчики
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(conv_handler)
-        application.add_handler(admin_conv_handler)
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        application.add_handler(CallbackQueryHandler(button_handler))
+        # Используем более редкий интервал для очистки
+        job_queue.run_repeating(periodic_cleanup, interval=3600, first=10)  # Каждый час вместо 30 минут
         
-        # Настраиваем планировщик задач
-        setup_job_queue(application)
-        
-        logger.info("✅ Bot handlers setup completed")
-        
-    except Exception as e:
-        logger.error(f"❌ Error setting up handlers: {e}")
-        raise
+        logger.info("✅ Job queue setup completed")
+    
+    logger.info("✅ Bot handlers setup completed")

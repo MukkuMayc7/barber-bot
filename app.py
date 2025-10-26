@@ -1,4 +1,4 @@
-# app.py - FIXED VERSION
+# app.py - FIXED VERSION FOR RENDER
 import os
 import asyncio
 from aiohttp import web
@@ -96,7 +96,9 @@ async def main():
     
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get('PORT', 10000))
+    
+    # ИСПРАВЛЕНИЕ: Используем порт из переменной окружения Render
+    port = int(os.environ.get('PORT', 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     
