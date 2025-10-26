@@ -1,4 +1,4 @@
-# database.py
+# database.py - FIXED VERSION
 import sqlite3
 from datetime import datetime, timedelta
 import logging
@@ -7,16 +7,19 @@ import config
 logger = logging.getLogger(__name__)
 
 class Database:
-    def __init__(self):
-        self.conn = sqlite3.connect('barbershop.db', check_same_thread=False)
+    def __init__(self, setup_notifications=True):
+        self.conn = sqlite3.connect('barbershop.db', check_same_thread=False, timeout=30.0)
         self.create_tables()
         self.migrate_database()
-        self.setup_default_notifications()
+        if setup_notifications:
+            self.setup_default_notifications()
         self.setup_default_schedule()
+        self.load_admins_from_db()
 
     def create_tables(self):
         cursor = self.conn.cursor()
         
+        # Существующие таблицы
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS appointments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,8 +72,98 @@ class Database:
             )
         ''')
         
+        # Новая таблица для администраторов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                admin_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE
+            )
+        ''')
+        
         self.conn.commit()
-    
+
+    def load_admins_from_db(self):
+        """Загружает список администраторов из базы данных"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT admin_id FROM bot_admins WHERE is_active = TRUE
+        ''')
+        db_admins = [row[0] for row in cursor.fetchall()]
+        
+        # Объединяем администраторов из .env и из базы данных
+        all_admins = list(set(config.BASE_ADMIN_IDS + db_admins))
+        config.update_admin_ids(all_admins)
+        
+        logger.info(f"📋 Loaded {len(all_admins)} admins from database: {all_admins}")
+
+    def add_admin(self, admin_id, username, first_name, last_name, added_by):
+        """Добавляет нового администратора"""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO bot_admins 
+                (admin_id, username, first_name, last_name, added_by, is_active)
+                VALUES (?, ?, ?, ?, ?, TRUE)
+            ''', (admin_id, username, first_name, last_name, added_by))
+            
+            self.conn.commit()
+            self.load_admins_from_db()  # Обновляем кэш
+            logger.info(f"✅ Admin {admin_id} added by {added_by}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error adding admin: {e}")
+            return False
+
+    def remove_admin(self, admin_id, removed_by):
+        """Удаляет администратора (деактивирует)"""
+        cursor = self.conn.cursor()
+        try:
+            # Не позволяем удалить самого себя
+            if admin_id == removed_by:
+                return False, "Нельзя удалить самого себя"
+            
+            # Не позволяем удалить базовых администраторов из .env
+            if admin_id in config.BASE_ADMIN_IDS:
+                return False, "Этот администратор защищен (указан в настройках)"
+            
+            cursor.execute('''
+                UPDATE bot_admins SET is_active = FALSE WHERE admin_id = ?
+            ''', (admin_id,))
+            
+            self.conn.commit()
+            self.load_admins_from_db()  # Обновляем кэш
+            logger.info(f"✅ Admin {admin_id} removed by {removed_by}")
+            return True, "Администратор успешно удален"
+        except Exception as e:
+            logger.error(f"❌ Error removing admin: {e}")
+            return False, f"Ошибка при удалении: {e}"
+
+    def get_all_admins(self):
+        """Возвращает список всех активных администраторов"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT admin_id, username, first_name, last_name, added_by, added_at
+            FROM bot_admins 
+            WHERE is_active = TRUE
+            ORDER BY added_at
+        ''')
+        return cursor.fetchall()
+
+    def get_admin_info(self, admin_id):
+        """Возвращает информацию об администраторе"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT admin_id, username, first_name, last_name, added_by, added_at
+            FROM bot_admins 
+            WHERE admin_id = ? AND is_active = TRUE
+        ''', (admin_id,))
+        return cursor.fetchone()
+
     def migrate_database(self):
         cursor = self.conn.cursor()
         try:
@@ -91,14 +184,17 @@ class Database:
             logger.warning(f"Не удалось добавить UNIQUE constraint: {e}")
 
     def setup_default_notifications(self):
-        cursor = self.conn.cursor()
-        for admin_id in config.ADMIN_IDS:
-            cursor.execute('''
-                INSERT OR IGNORE INTO admin_settings (admin_id, notification_chat_id)
-                VALUES (?, ?)
-            ''', (admin_id, admin_id))
-        self.conn.commit()
-        logger.info("Настроены уведомления по умолчанию для администраторов")
+        try:
+            cursor = self.conn.cursor()
+            for admin_id in config.ADMIN_IDS:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO admin_settings (admin_id, notification_chat_id)
+                    VALUES (?, ?)
+                ''', (admin_id, admin_id))
+            self.conn.commit()
+            logger.info("Настроены уведомления по умолчанию для администраторов")
+        except Exception as e:
+            logger.warning(f"Не удалось настроить уведомления: {e}")
     
     def setup_default_schedule(self):
         cursor = self.conn.cursor()

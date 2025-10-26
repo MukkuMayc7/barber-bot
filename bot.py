@@ -1,4 +1,4 @@
-# bot.py
+# bot.py - FULL VERSION WITH ADMIN MANAGEMENT
 import logging
 import re
 import asyncio
@@ -14,6 +14,8 @@ import config
 
 # Состояния для ConversationHandler
 SERVICE, DATE, TIME, PHONE = range(4)
+# Новые состояния для управления администраторами
+ADMIN_MANAGEMENT, ADD_ADMIN, REMOVE_ADMIN = range(4, 7)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -34,7 +36,8 @@ def get_main_keyboard(user_id):
             [KeyboardButton("📝 Записать клиента вручную")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
             [KeyboardButton("👑 Все записи"), KeyboardButton("📊 Записи сегодня")],
-            [KeyboardButton("📈 Статистика"), KeyboardButton("🗓️ График работы")]
+            [KeyboardButton("📈 Статистика"), KeyboardButton("🗓️ График работы")],
+            [KeyboardButton("👥 Управление администраторами")]  # Новая кнопка
         ]
     else:
         # Клавиатура для обычного пользователя
@@ -57,7 +60,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user = update.effective_user
     
@@ -79,7 +82,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👑 *Все записи* - просмотр всех записей\n"
             "📊 *Записи сегодня* - записи на сегодня\n"
             "📈 *Статистика* - статистика пользователей бота\n"
-            "🗓️ *График работы* - настройка расписания"
+            "🗓️ *График работы* - настройка расписания\n"
+            "👥 *Управление администраторами* - добавление/удаление администраторов"
         )
     else:
         welcome_text += (
@@ -99,7 +103,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений с кнопок"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     text = update.message.text
     user_id = update.effective_user.id
@@ -124,6 +128,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_statistics(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
+        elif text == "👥 Управление администраторами":  # Новая функция
+            await manage_admins(update, context)
         elif text == "🔙 Главное меню":
             await show_main_menu(update, context)
         elif text == "🔙 Назад" and context.user_data.get('awaiting_phone'):
@@ -204,7 +210,7 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику пользователей бота (только для администратора)"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -260,7 +266,7 @@ async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора услуги"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     query = update.callback_query
     service = query.data.split("_")[1]
@@ -339,7 +345,7 @@ async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора даты"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     query = update.callback_query
     
@@ -457,7 +463,7 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Возврат к выбору даты при нажатии 'Назад' во время ввода телефона"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     context.user_data['awaiting_phone'] = False
     
@@ -508,7 +514,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода номера телефона"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     context.user_data['awaiting_phone'] = False
     
@@ -638,7 +644,7 @@ async def show_admin_manual_appointments(update: Update, context: ContextTypes.D
     """Показывает записи, внесенные администратором вручную"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -697,7 +703,7 @@ async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYP
     """Показывает записи текущего пользователя"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -749,7 +755,7 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
     """Показывает записи для отмены"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -812,7 +818,7 @@ async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TY
     """Показывает все записи с телефонами (администратор)"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -866,7 +872,7 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
     """Показывает записи на сегодня с телефонами (администратор)"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -910,7 +916,7 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление графиком работы"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id = update.effective_user.id
     
@@ -947,6 +953,298 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+# =============================================================================
+# НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
+# =============================================================================
+
+async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Управление администраторами"""
+    global db
+    if db is None:
+        db = database.Database(setup_notifications=False)
+    
+    user_id = update.effective_user.id
+    
+    if user_id not in config.ADMIN_IDS:
+        await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        return
+    
+    admins = db.get_all_admins()
+    
+    text = "👥 *Управление администраторами*\n\n"
+    text += f"📊 Всего администраторов: {len(config.ADMIN_IDS)}\n\n"
+    text += "*Текущие администраторы:*\n"
+    
+    for admin in admins:
+        admin_id, username, first_name, last_name, added_by, added_at = admin
+        admin_name = f"{first_name or ''} {last_name or ''}".strip()
+        if username:
+            admin_name += f" (@{username})"
+        
+        added_info = db.get_admin_info(added_by)
+        added_name = "система"
+        if added_info:
+            added_name = f"{added_info[2] or ''} {added_info[3] or ''}".strip()
+            if added_info[1]:
+                added_name += f" (@{added_info[1]})"
+        
+        text += f"• {admin_name} (ID: {admin_id})\n"
+        text += f"  Добавлен: {added_name}\n"
+        text += f"  Дата: {added_at[:10]}\n\n"
+    
+    # Добавляем базовых администраторов из .env
+    for base_admin_id in config.BASE_ADMIN_IDS:
+        if base_admin_id not in [admin[0] for admin in admins]:
+            text += f"• 🔒 Защищенный администратор (ID: {base_admin_id})\n"
+            text += f"  Добавлен: через настройки (.env)\n\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить администратора", callback_data="add_admin")],
+        [InlineKeyboardButton("➖ Удалить администратора", callback_data="remove_admin")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало процесса добавления администратора"""
+    query = update.callback_query
+    await query.answer()
+    
+    text = (
+        "➕ *Добавление администратора*\n\n"
+        "Чтобы добавить администратора, перешлите мне любое сообщение от пользователя, "
+        "которого хотите сделать администратором, или введите его ID вручную.\n\n"
+        "*Формат:* только цифры (например: 123456789)\n\n"
+        "Или нажмите кнопку 'Отмена' для возврата:"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    
+    return ADD_ADMIN
+
+async def add_admin_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка добавления администратора"""
+    global db
+    if db is None:
+        db = database.Database(setup_notifications=False)
+    
+    user_id = update.effective_user.id
+    
+    if update.message.forward_from:
+        # Если переслано сообщение от пользователя
+        new_admin = update.message.forward_from
+        admin_id = new_admin.id
+        username = new_admin.username
+        first_name = new_admin.first_name
+        last_name = new_admin.last_name
+    elif update.message.text and update.message.text.isdigit():
+        # Если введен ID вручную
+        admin_id = int(update.message.text)
+        # Пытаемся получить информацию о пользователе
+        try:
+            user = await context.bot.get_chat(admin_id)
+            username = user.username
+            first_name = user.first_name
+            last_name = user.last_name
+        except Exception as e:
+            username = None
+            first_name = "Неизвестно"
+            last_name = ""
+            logger.warning(f"Не удалось получить информацию о пользователе {admin_id}: {e}")
+    else:
+        await update.message.reply_text(
+            "❌ Неверный формат. Введите ID пользователя (только цифры) или перешлите сообщение от него.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]])
+        )
+        return ADD_ADMIN
+    
+    # Проверяем, не является ли пользователь уже администратором
+    if admin_id in config.ADMIN_IDS:
+        await update.message.reply_text(
+            f"❌ Пользователь (ID: {admin_id}) уже является администратором.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]])
+        )
+        return ConversationHandler.END
+    
+    # Добавляем администратора
+    success = db.add_admin(admin_id, username, first_name, last_name, user_id)
+    
+    if success:
+        admin_name = f"{first_name or ''} {last_name or ''}".strip()
+        if username:
+            admin_name += f" (@{username})"
+        
+        text = (
+            f"✅ *Администратор успешно добавлен!*\n\n"
+            f"👤 Имя: {admin_name}\n"
+            f"🆔 ID: {admin_id}\n\n"
+            f"Теперь пользователь имеет права администратора."
+        )
+    else:
+        text = "❌ Не удалось добавить администратора. Попробуйте еще раз."
+    
+    keyboard = [[InlineKeyboardButton("🔙 К управлению администраторами", callback_data="manage_admins")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    
+    return ConversationHandler.END
+
+async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало процесса удаления администратора"""
+    global db
+    if db is None:
+        db = database.Database(setup_notifications=False)
+    
+    query = update.callback_query
+    await query.answer()
+    
+    admins = db.get_all_admins()
+    
+    if not admins:
+        text = "❌ Нет администраторов для удаления."
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text, reply_markup=reply_markup)
+        return ConversationHandler.END
+    
+    text = "➖ *Удаление администратора*\n\nВыберите администратора для удаления:\n\n"
+    keyboard = []
+    
+    for admin in admins:
+        admin_id, username, first_name, last_name, added_by, added_at = admin
+        admin_name = f"{first_name or ''} {last_name or ''}".strip()
+        if username:
+            admin_name += f" (@{username})"
+        
+        # Показываем защищенных администраторов, но делаем их недоступными для удаления
+        if admin_id in config.BASE_ADMIN_IDS:
+            keyboard.append([InlineKeyboardButton(
+                f"🔒 {admin_name} (ID: {admin_id}) - защищен", 
+                callback_data="protected_admin"
+            )])
+        else:
+            keyboard.append([InlineKeyboardButton(
+                f"❌ {admin_name} (ID: {admin_id})", 
+                callback_data=f"remove_admin_{admin_id}"
+            )])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    
+    return REMOVE_ADMIN
+
+async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение удаления администратора"""
+    global db
+    if db is None:
+        db = database.Database(setup_notifications=False)
+    
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "protected_admin":
+        await query.answer("Этот администратор защищен и не может быть удален", show_alert=True)
+        return REMOVE_ADMIN
+    
+    admin_id = int(query.data.split("_")[2])
+    admin_info = db.get_admin_info(admin_id)
+    
+    if not admin_info:
+        await query.answer("Администратор не найден", show_alert=True)
+        return REMOVE_ADMIN
+    
+    admin_id, username, first_name, last_name, added_by, added_at = admin_info
+    admin_name = f"{first_name or ''} {last_name or ''}".strip()
+    if username:
+        admin_name += f" (@{username})"
+    
+    context.user_data['remove_admin_id'] = admin_id
+    
+    text = (
+        f"⚠️ *Подтверждение удаления*\n\n"
+        f"Вы действительно хотите удалить администратора?\n\n"
+        f"👤 Имя: {admin_name}\n"
+        f"🆔 ID: {admin_id}\n\n"
+        f"*Внимание:* Это действие нельзя отменить!"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_remove_admin")],
+        [InlineKeyboardButton("❌ Нет, отменить", callback_data="manage_admins")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    
+    return REMOVE_ADMIN
+
+async def remove_admin_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполнение удаления администратора"""
+    global db
+    if db is None:
+        db = database.Database(setup_notifications=False)
+    
+    query = update.callback_query
+    await query.answer()
+    
+    admin_id = context.user_data.get('remove_admin_id')
+    user_id = query.from_user.id
+    
+    if not admin_id:
+        await query.edit_message_text(
+            "❌ Ошибка: ID администратора не найден.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]])
+        )
+        return ConversationHandler.END
+    
+    success, message = db.remove_admin(admin_id, user_id)
+    
+    if success:
+        text = f"✅ {message}"
+    else:
+        text = f"❌ {message}"
+    
+    keyboard = [[InlineKeyboardButton("🔙 К управлению администраторами", callback_data="manage_admins")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup)
+    
+    # Очищаем user_data
+    if 'remove_admin_id' in context.user_data:
+        del context.user_data['remove_admin_id']
+    
+    return ConversationHandler.END
+
+async def cancel_admin_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена управления администраторами"""
+    query = update.callback_query
+    await query.answer()
+    
+    await manage_admins(update, context)
+    return ConversationHandler.END
+
+# =============================================================================
+# СУЩЕСТВУЮЩИЕ ФУНКЦИИ (без изменений)
+# =============================================================================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline кнопок"""
@@ -994,12 +1292,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await schedule_end_selected(update, context)
     elif query.data == "manage_schedule":
         await manage_schedule(update, context)
+    # Новые обработчики для управления администраторами
+    elif query.data == "manage_admins":
+        await manage_admins(update, context)
+    elif query.data == "add_admin":
+        await add_admin_start(update, context)
+    elif query.data == "remove_admin":
+        await remove_admin_start(update, context)
+    elif query.data.startswith("remove_admin_"):
+        await remove_admin_confirm(update, context)
+    elif query.data == "confirm_remove_admin":
+        await remove_admin_execute(update, context)
+    elif query.data == "protected_admin":
+        await query.answer("Этот администратор защищен и не может быть удален", show_alert=True)
 
 async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора дня недели для настройки графика"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     query = update.callback_query
     weekday = int(query.data.split("_")[2])
@@ -1066,7 +1377,7 @@ async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TY
     """Обработчик выбора выходного дня"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     query = update.callback_query
     weekday = int(query.data.split("_")[2])
@@ -1119,7 +1430,7 @@ async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TY
     """Обработчик выбора времени окончания работы"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     query = update.callback_query
     end_time = query.data.split("_")[2]
@@ -1143,7 +1454,7 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
     """Обработчик отмены записи"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     query = update.callback_query
     user_id = query.from_user.id
@@ -1203,7 +1514,7 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
     """Уведомляет администраторов об отмене записи"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     user_id, user_name, phone, service, date, time = appointment
     display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
@@ -1243,7 +1554,7 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
     """Отправляет уведомление о новой записи с номером телефона"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     notification_chats = db.get_notification_chats()
     
@@ -1278,7 +1589,7 @@ async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
     """Проверяет и уведомляет о дублирующихся записях"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     duplicates = db.check_duplicate_appointments()
     
@@ -1307,7 +1618,7 @@ async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
     """Отправляет уведомление всем администраторам"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     notification_chats = db.get_notification_chats()
     
@@ -1357,7 +1668,7 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Отправка напоминаний клиентам"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     # Сначала очищаем прошедшие записи
     cleanup_result = db.cleanup_completed_appointments()
@@ -1400,7 +1711,7 @@ async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
     """Отправка ежедневного расписания администраторам"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     # Сначала очищаем прошедшие записи
     cleanup_result = db.cleanup_completed_appointments()
@@ -1438,7 +1749,7 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная проверка дублирующихся записей"""
     global db
     if db is None:
-        db = database.Database()
+        db = database.Database(setup_notifications=False)
     
     # Сначала очищаем прошедшие записи
     cleanup_result = db.cleanup_completed_appointments()
@@ -1451,13 +1762,17 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
 async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
     """Периодическая очистка прошедших записей (каждые 30 минут)"""
     global db
-    if db is None:
-        db = database.Database()
-    
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+    try:
+        # Используем существующее соединение или создаем новое БЕЗ setup_notifications
+        if db is None:
+            db = database.Database(setup_notifications=False)
+        
+        cleanup_result = db.cleanup_completed_appointments()
+        
+        if cleanup_result['total_deleted'] > 0:
+            logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+    except Exception as e:
+        logger.error(f"Ошибка при периодической очистке: {e}")
 
 def setup_job_queue(application: Application):
     """Настройка планировщика задач"""
@@ -1503,9 +1818,31 @@ def setup_handlers(application):
             ],
         )
         
+        # Создаем ConversationHandler для управления администраторами
+        admin_conv_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(add_admin_start, pattern="^add_admin$"),
+                CallbackQueryHandler(remove_admin_start, pattern="^remove_admin$"),
+            ],
+            states={
+                ADD_ADMIN: [
+                    MessageHandler(filters.TEXT | filters.FORWARDED, add_admin_process),
+                ],
+                REMOVE_ADMIN: [
+                    CallbackQueryHandler(remove_admin_confirm, pattern="^remove_admin_"),
+                    CallbackQueryHandler(remove_admin_execute, pattern="^confirm_remove_admin$"),
+                ],
+            },
+            fallbacks=[
+                CallbackQueryHandler(cancel_admin_management, pattern="^manage_admins$"),
+                CommandHandler("start", start)
+            ],
+        )
+        
         # Добавляем все обработчики
         application.add_handler(CommandHandler("start", start))
         application.add_handler(conv_handler)
+        application.add_handler(admin_conv_handler)
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         application.add_handler(CallbackQueryHandler(button_handler))
         
