@@ -1,9 +1,9 @@
-# app.py - FIXED VERSION FOR RENDER
+# app.py - FIXED VERSION WITH PROPER INITIALIZATION
 import os
 import asyncio
 from aiohttp import web
 import logging
-import aiohttp
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,53 +16,69 @@ WEBHOOK_PATH = f"/{BOT_TOKEN}"
 # Глобальные переменные
 bot_initialized = False
 application = None
+init_start_time = None
 
 async def initialize_bot():
-    """Инициализация полного функционала бота"""
-    global bot_initialized, application
+    """Инициализация бота - СИНХРОННАЯ чтобы гарантировать запуск"""
+    global bot_initialized, application, init_start_time
+    
+    init_start_time = time.time()
+    logger.info("🚀 STARTING BOT INITIALIZATION...")
     
     try:
-        logger.info("🚀 INITIALIZING FULL BOT FUNCTIONALITY...")
-        
-        # Импортируем необходимые модули
+        # Импорты внутри функции чтобы избежать циклических зависимостей
         from telegram.ext import Application
-        from bot import setup_handlers
         import database
+        from bot import setup_handlers
         
         # Инициализируем базу данных
+        logger.info("📦 Initializing database...")
         db = database.Database()
-        logger.info("✅ DATABASE INITIALIZED")
+        logger.info("✅ Database initialized")
         
         # Создаем приложение бота
+        logger.info("🤖 Creating bot application...")
         application = Application.builder().token(BOT_TOKEN).build()
-        logger.info("✅ BOT APPLICATION CREATED")
+        logger.info("✅ Bot application created")
         
         # Настраиваем обработчики
+        logger.info("⚙️ Setting up handlers...")
         setup_handlers(application)
-        logger.info("✅ BOT HANDLERS SETUP COMPLETED")
+        logger.info("✅ Bot handlers setup completed")
         
         # Устанавливаем вебхук
-        webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-        await application.bot.set_webhook(webhook_url, drop_pending_updates=True)
-        logger.info(f"✅ WEBHOOK SET: {webhook_url}")
+        logger.info("🌐 Setting webhook...")
+        await application.bot.set_webhook(
+            f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+            drop_pending_updates=True
+        )
+        logger.info(f"✅ Webhook set: {WEBHOOK_URL}{WEBHOOK_PATH}")
+        
+        # Инициализируем планировщик
+        logger.info("⏰ Starting job queue...")
+        from bot import setup_job_queue
+        setup_job_queue(application)
+        logger.info("✅ Job queue started")
         
         bot_initialized = True
-        logger.info("🎉 FULL BOT FUNCTIONALITY INITIALIZED!")
-        return True
+        init_time = time.time() - init_start_time
+        logger.info(f"🎉 Bot fully initialized in {init_time:.2f} seconds!")
         
     except Exception as e:
-        logger.error(f"💥 BOT INITIALIZATION FAILED: {e}")
+        logger.error(f"💥 Bot initialization failed: {e}")
         import traceback
-        logger.error(traceback.format_exc())
-        return False
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 async def handle_webhook(request):
-    """Обработчик вебхука с полным функционалом"""
+    """Обработчик вебхука"""
     global bot_initialized, application
     
-    if not bot_initialized or application is None:
-        logger.warning("⚠️ Bot not fully initialized")
-        return web.Response(text="Bot initializing", status=503)
+    if not bot_initialized:
+        logger.warning("⏳ Bot not initialized yet - returning 503")
+        return web.Response(
+            text="Bot initializing, please try again in a few seconds", 
+            status=503
+        )
     
     try:
         # Получаем данные обновления
@@ -73,7 +89,7 @@ async def handle_webhook(request):
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
         
-        logger.info("✅ WEBHOOK PROCESSED WITH FULL FUNCTIONALITY")
+        logger.info("✅ Webhook processed successfully")
         return web.Response(text="OK")
         
     except Exception as e:
@@ -81,47 +97,49 @@ async def handle_webhook(request):
         return web.Response(text="Error", status=500)
 
 async def health_check(request):
-    status = "RUNNING" if bot_initialized else "INITIALIZING"
-    return web.Response(text=f"Bot is {status}!")
-
-async def init_app():
-    """Инициализация приложения"""
-    logger.info("🌐 INITIALIZING WEB APPLICATION...")
+    """Проверка здоровья приложения"""
+    global bot_initialized, init_start_time
     
+    status_info = {
+        "status": "RUNNING" if bot_initialized else "INITIALIZING",
+        "bot_initialized": bot_initialized
+    }
+    
+    if init_start_time and not bot_initialized:
+        init_time = time.time() - init_start_time
+        status_info["initializing_for_seconds"] = f"{init_time:.1f}s"
+    
+    import json
+    return web.Response(
+        text=json.dumps(status_info, ensure_ascii=False),
+        content_type='application/json'
+    )
+
+async def start_server():
+    """Запуск сервера с гарантированной инициализацией бота"""
+    # Сначала инициализируем бота СИНХРОННО
+    logger.info("🎯 Starting bot initialization BEFORE server start...")
+    await initialize_bot()
+    
+    # Затем запускаем сервер
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
     app.router.add_get('/health', health_check)
     app.router.add_get('/', health_check)
     
-    logger.info("✅ WEB APPLICATION READY")
-    return app
-
-async def start_background_tasks(app):
-    """Запуск фоновых задач"""
-    # Инициализируем бота в фоне
-    asyncio.create_task(initialize_bot())
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get('PORT', 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    logger.info(f"🚀 Server started on port {port}")
+    logger.info("📱 Bot is ready to receive webhooks!")
+    
+    # Бесконечный цикл для поддержания работы
+    await asyncio.Future()
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    
-    async def main():
-        app = await init_app()
-        
-        # Запускаем фоновые задачи
-        await start_background_tasks(app)
-        
-        # Запускаем сервер
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', port)
-        await site.start()
-        
-        logger.info(f"🚀 SERVER STARTED ON PORT {port}")
-        logger.info("🎯 BOT IS READY TO RECEIVE REQUESTS!")
-        
-        # Бесконечный цикл для поддержания работы сервера
-        while True:
-            await asyncio.sleep(3600)
-    
-    # Запускаем приложение
-    asyncio.run(main())
+    # Запускаем все синхронно
+    asyncio.run(start_server())

@@ -21,7 +21,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-db = database.Database()
+# Глобальная переменная для базы данных
+db = None
 
 def get_main_keyboard(user_id):
     """Создает основную клавиатуру под сообщением"""
@@ -54,6 +55,10 @@ def get_phone_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user = update.effective_user
     
     # Добавляем/обновляем пользователя в статистике
@@ -92,6 +97,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений с кнопок"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     text = update.message.text
     user_id = update.effective_user.id
     
@@ -193,6 +202,10 @@ async def about_barbershop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику пользователей бота (только для администратора)"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -245,6 +258,10 @@ async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_T
 
 async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора услуги"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     query = update.callback_query
     service = query.data.split("_")[1]
     context.user_data['service'] = service
@@ -320,6 +337,10 @@ def is_date_available(date, current_time, start_time, end_time, days_ahead):
 
 async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора даты"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     query = update.callback_query
     
     # Проверяем наличие service в user_data
@@ -434,6 +455,10 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору даты при нажатии 'Назад' во время ввода телефона"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     context.user_data['awaiting_phone'] = False
     
     # Восстанавливаем клавиатуру выбора времени
@@ -481,6 +506,10 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода номера телефона"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     context.user_data['awaiting_phone'] = False
     
     # Проверяем, отправил ли пользователь контакт или ввел текст
@@ -607,6 +636,10 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_admin_manual_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи, внесенные администратором вручную"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -662,6 +695,10 @@ async def show_admin_manual_appointments(update: Update, context: ContextTypes.D
 
 async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи текущего пользователя"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     appointments = db.get_user_appointments(user_id)
@@ -710,6 +747,10 @@ async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи для отмены"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     if user_id in config.ADMIN_IDS:
@@ -769,6 +810,10 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
 
 async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает все записи с телефонами (администратор)"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -819,6 +864,10 @@ async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи на сегодня с телефонами (администратор)"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -859,6 +908,10 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
 
 async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление графиком работы"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -944,6 +997,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора дня недели для настройки графика"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     query = update.callback_query
     weekday = int(query.data.split("_")[2])
     context.user_data['schedule_weekday'] = weekday
@@ -1007,6 +1064,10 @@ async def schedule_working_selected(update: Update, context: ContextTypes.DEFAUL
 
 async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора выходного дня"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     query = update.callback_query
     weekday = int(query.data.split("_")[2])
     day_name = config.WEEKDAYS[weekday]
@@ -1056,6 +1117,10 @@ async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_
 
 async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени окончания работы"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     query = update.callback_query
     end_time = query.data.split("_")[2]
     start_time = context.user_data['schedule_start']
@@ -1076,6 +1141,10 @@ async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -1132,6 +1201,10 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
 
 async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, appointment, cancelled_by_user_id, is_admin=False):
     """Уведомляет администраторов об отмене записи"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     user_id, user_name, phone, service, date, time = appointment
     display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
     
@@ -1168,6 +1241,10 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
 
 async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, user_name, user_username, phone, service, date, time, appointment_id, is_manual=False):
     """Отправляет уведомление о новой записи с номером телефона"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     notification_chats = db.get_notification_chats()
     
     if not notification_chats:
@@ -1199,6 +1276,10 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
 
 async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
     """Проверяет и уведомляет о дублирующихся записях"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     duplicates = db.check_duplicate_appointments()
     
     if duplicates:
@@ -1224,6 +1305,10 @@ async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
     """Отправляет уведомление всем администраторам"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     notification_chats = db.get_notification_chats()
     
     for chat_id in notification_chats:
@@ -1270,6 +1355,10 @@ def normalize_phone(phone):
 
 async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Отправка напоминаний клиентам"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     # Сначала очищаем прошедшие записи
     cleanup_result = db.cleanup_completed_appointments()
     
@@ -1309,6 +1398,10 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
     """Отправка ежедневного расписания администраторам"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     # Сначала очищаем прошедшие записи
     cleanup_result = db.cleanup_completed_appointments()
     
@@ -1343,6 +1436,10 @@ async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
 
 async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная проверка дублирующихся записей"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     # Сначала очищаем прошедшие записи
     cleanup_result = db.cleanup_completed_appointments()
     
@@ -1353,50 +1450,70 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
 
 async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
     """Периодическая очистка прошедших записей (каждые 30 минут)"""
+    global db
+    if db is None:
+        db = database.Database()
+    
     cleanup_result = db.cleanup_completed_appointments()
     
     if cleanup_result['total_deleted'] > 0:
         logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
 
 def setup_job_queue(application: Application):
-    job_queue = application.job_queue
-    
-    # Основные задачи
-    job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
-    job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
-    job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
-    
-    # Периодическая очистка прошедших записей (каждые 30 минут)
-    job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
+    """Настройка планировщика задач"""
+    try:
+        job_queue = application.job_queue
+        
+        if job_queue is None:
+            logger.warning("⚠️ Job queue is not available")
+            return
+            
+        # Основные задачи
+        job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
+        job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
+        job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
+        
+        # Периодическая очистка прошедших записей (каждые 30 минут)
+        job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
+        
+        logger.info("✅ Job queue setup completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Job queue setup failed: {e}")
 
 def setup_handlers(application):
     """Настройка обработчиков для приложения"""
-    from telegram.ext import CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
-    
-    # Создаем ConversationHandler для процесса записи
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(time_selected, pattern="^time_"),
-        ],
-        states={
-            PHONE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
-                MessageHandler(filters.CONTACT, phone_input)
+    try:
+        from telegram.ext import CommandHandler, MessageHandler, filters, CallbackQueryHandler, ConversationHandler
+        
+        # Создаем ConversationHandler для процесса записи
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(time_selected, pattern="^time_"),
             ],
-        },
-        fallbacks=[
-            MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
-            CommandHandler("start", start)
-        ],
-    )
-    
-    # Добавляем все обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # Настраиваем планировщик задач
-    setup_job_queue(application)
-    
-    logger.info("✅ Bot handlers setup completed")
+            states={
+                PHONE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
+                    MessageHandler(filters.CONTACT, phone_input)
+                ],
+            },
+            fallbacks=[
+                MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
+                CommandHandler("start", start)
+            ],
+        )
+        
+        # Добавляем все обработчики
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(conv_handler)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        
+        # Настраиваем планировщик задач
+        setup_job_queue(application)
+        
+        logger.info("✅ Bot handlers setup completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Error setting up handlers: {e}")
+        raise
