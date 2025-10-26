@@ -1,9 +1,8 @@
-# app.py - FIXED VERSION WITH PROPER INITIALIZATION
+# app.py - OPTIMIZED VERSION FOR RENDER
 import os
 import asyncio
 from aiohttp import web
 import logging
-import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,16 +15,14 @@ WEBHOOK_PATH = f"/{BOT_TOKEN}"
 # Глобальные переменные
 bot_initialized = False
 application = None
-init_start_time = None
 
 async def initialize_bot():
-    """Инициализация бота - СИНХРОННАЯ чтобы гарантировать запуск"""
-    global bot_initialized, application, init_start_time
-    
-    init_start_time = time.time()
-    logger.info("🚀 STARTING BOT INITIALIZATION...")
+    """Инициализация бота"""
+    global bot_initialized, application
     
     try:
+        logger.info("🚀 STARTING BOT INITIALIZATION...")
+        
         # Импорты внутри функции чтобы избежать циклических зависимостей
         from telegram.ext import Application
         import database
@@ -54,15 +51,8 @@ async def initialize_bot():
         )
         logger.info(f"✅ Webhook set: {WEBHOOK_URL}{WEBHOOK_PATH}")
         
-        # Инициализируем планировщик
-        logger.info("⏰ Starting job queue...")
-        from bot import setup_job_queue
-        setup_job_queue(application)
-        logger.info("✅ Job queue started")
-        
         bot_initialized = True
-        init_time = time.time() - init_start_time
-        logger.info(f"🎉 Bot fully initialized in {init_time:.2f} seconds!")
+        logger.info("🎉 Bot fully initialized and ready!")
         
     except Exception as e:
         logger.error(f"💥 Bot initialization failed: {e}")
@@ -74,59 +64,37 @@ async def handle_webhook(request):
     global bot_initialized, application
     
     if not bot_initialized:
-        logger.warning("⏳ Bot not initialized yet - returning 503")
-        return web.Response(
-            text="Bot initializing, please try again in a few seconds", 
-            status=503
-        )
+        logger.warning("⏳ Bot not initialized yet")
+        return web.Response(text="Bot initializing", status=503)
     
     try:
-        # Получаем данные обновления
         data = await request.json()
-        
-        # Обрабатываем через полную систему бота
         from telegram import Update
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
-        
-        logger.info("✅ Webhook processed successfully")
         return web.Response(text="OK")
-        
     except Exception as e:
-        logger.error(f"❌ Webhook processing error: {e}")
+        logger.error(f"Webhook error: {e}")
         return web.Response(text="Error", status=500)
 
 async def health_check(request):
     """Проверка здоровья приложения"""
-    global bot_initialized, init_start_time
-    
-    status_info = {
-        "status": "RUNNING" if bot_initialized else "INITIALIZING",
-        "bot_initialized": bot_initialized
-    }
-    
-    if init_start_time and not bot_initialized:
-        init_time = time.time() - init_start_time
-        status_info["initializing_for_seconds"] = f"{init_time:.1f}s"
-    
-    import json
-    return web.Response(
-        text=json.dumps(status_info, ensure_ascii=False),
-        content_type='application/json'
-    )
+    global bot_initialized
+    status = "RUNNING" if bot_initialized else "INITIALIZING"
+    return web.Response(text=f"Bot status: {status}")
 
-async def start_server():
-    """Запуск сервера с гарантированной инициализацией бота"""
-    # Сначала инициализируем бота СИНХРОННО
-    logger.info("🎯 Starting bot initialization BEFORE server start...")
-    await initialize_bot()
-    
-    # Затем запускаем сервер
+async def main():
+    """Основная функция"""
+    # Создаем приложение aiohttp
     app = web.Application()
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
     app.router.add_get('/health', health_check)
     app.router.add_get('/', health_check)
     
+    # Запускаем инициализацию бота в фоне
+    asyncio.create_task(initialize_bot())
+    
+    # Запускаем сервер
     runner = web.AppRunner(app)
     await runner.setup()
     
@@ -135,11 +103,10 @@ async def start_server():
     await site.start()
     
     logger.info(f"🚀 Server started on port {port}")
-    logger.info("📱 Bot is ready to receive webhooks!")
+    logger.info("📱 Bot is starting up...")
     
-    # Бесконечный цикл для поддержания работы
+    # Бесконечный цикл
     await asyncio.Future()
 
 if __name__ == '__main__':
-    # Запускаем все синхронно
-    asyncio.run(start_server())
+    asyncio.run(main())
