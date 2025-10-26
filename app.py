@@ -1,4 +1,4 @@
-# app.py - COMPATIBLE WITH PTB 20.0 AND PYTHON 3.13
+# app.py - FIXED VERSION WITH ERROR HANDLING
 import os
 import asyncio
 from aiohttp import web
@@ -20,28 +20,36 @@ async def initialize_bot():
     try:
         logger.info("🚀 STARTING BOT INITIALIZATION...")
         
-        # 1. Тест базы данных
+        # 1. База данных
         logger.info("📦 Testing database...")
         import database
         db = database.Database()
         logger.info("✅ Database OK")
         
-        # 2. Тест Telegram бота (версия 20.0)
+        # 2. Telegram бот
         logger.info("🤖 Testing Telegram bot...")
         from telegram.ext import Application
         application = Application.builder().token(BOT_TOKEN).build()
         logger.info("✅ Telegram bot OK")
         
-        # 3. Настройка обработчиков
+        # 3. Обработчики
         logger.info("⚙️ Setting up handlers...")
         from bot import setup_handlers
         setup_handlers(application)
         logger.info("✅ Handlers setup OK")
         
-        # 4. Установка вебхука
+        # 4. Вебхук (с обработкой ошибок)
         logger.info("🌐 Setting webhook...")
-        await application.bot.set_webhook(f"{WEBHOOK_URL}{WEBHOOK_PATH}")
-        logger.info("✅ Webhook set")
+        try:
+            await application.bot.set_webhook(
+                url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+                drop_pending_updates=True
+            )
+            logger.info("✅ Webhook set successfully")
+        except Exception as e:
+            logger.error(f"❌ Webhook failed: {e}")
+            # Продолжаем даже если вебхук не установился
+            logger.info("🔄 Continuing without webhook...")
         
         bot_initialized = True
         logger.info("🎉 Bot fully initialized!")
@@ -53,15 +61,18 @@ async def initialize_bot():
 async def handle_webhook(request):
     global bot_initialized, application
     if not bot_initialized:
+        logger.warning("⏳ Bot not initialized yet")
         return web.Response(text="Bot initializing", status=503)
+    
     try:
         data = await request.json()
         from telegram import Update
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
+        logger.info("✅ Webhook processed")
         return web.Response(text="OK")
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"❌ Webhook error: {e}")
         return web.Response(text="Error", status=500)
 
 async def health_check(request):
@@ -85,6 +96,10 @@ async def main():
     await site.start()
     
     logger.info(f"🚀 Server started on port {port}")
+    logger.info("📱 Waiting for bot initialization...")
+    
+    # Бесконечный цикл
+    await asyncio.Future()
 
 if __name__ == '__main__':
     asyncio.run(main())
