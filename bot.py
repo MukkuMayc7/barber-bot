@@ -1,7 +1,6 @@
-# bot.py - FIXED VERSION WITH COMPLETE FUNCTIONS
+# bot.py
 import logging
 import re
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -14,8 +13,6 @@ import config
 
 # Состояния для ConversationHandler
 SERVICE, DATE, TIME, PHONE = range(4)
-# Новые состояния для управления администраторами
-ADMIN_MANAGEMENT, ADD_ADMIN, REMOVE_ADMIN = range(4, 7)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -23,8 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Глобальная переменная для базы данных
-db = None
+db = database.Database()
+
 
 def get_main_keyboard(user_id):
     """Создает основную клавиатуру под сообщением"""
@@ -36,8 +33,7 @@ def get_main_keyboard(user_id):
             [KeyboardButton("📝 Записать клиента вручную")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
             [KeyboardButton("👑 Все записи"), KeyboardButton("📊 Записи сегодня")],
-            [KeyboardButton("📈 Статистика"), KeyboardButton("🗓️ График работы")],
-            [KeyboardButton("👥 Управление администраторами")]  # Новая кнопка
+            [KeyboardButton("📈 Статистика"), KeyboardButton("🗓️ График работы")]
         ]
     else:
         # Клавиатура для обычного пользователя
@@ -49,6 +45,7 @@ def get_main_keyboard(user_id):
     
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
+
 def get_phone_keyboard():
     """Создает клавиатуру для ввода телефона"""
     return ReplyKeyboardMarkup([
@@ -56,12 +53,9 @@ def get_phone_keyboard():
         [KeyboardButton("🔙 Назад")]
     ], resize_keyboard=True, one_time_keyboard=True)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user = update.effective_user
     
     # Добавляем/обновляем пользователя в статистике
@@ -82,8 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👑 *Все записи* - просмотр всех записей\n"
             "📊 *Записи сегодня* - записи на сегодня\n"
             "📈 *Статистика* - статистика пользователей бота\n"
-            "🗓️ *График работы* - настройка расписания\n"
-            "👥 *Управление администраторами* - добавление/удаление администраторов"
+            "🗓️ *График работы* - настройка расписания"
         )
     else:
         welcome_text += (
@@ -99,12 +92,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений с кнопок"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     text = update.message.text
     user_id = update.effective_user.id
     
@@ -128,8 +118,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_statistics(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
-        elif text == "👥 Управление администраторами":  # Новая функция
-            await manage_admins(update, context)
         elif text == "🔙 Главное меню":
             await show_main_menu(update, context)
         elif text == "🔙 Назад" and context.user_data.get('awaiting_phone'):
@@ -159,6 +147,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=get_main_keyboard(user_id)
             )
 
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает главное меню"""
     if update.callback_query:
@@ -175,6 +164,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_keyboard(user_id),
             parse_mode='Markdown'
         )
+
 
 async def about_barbershop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обновленная информация о парикмахерской"""
@@ -206,12 +196,9 @@ async def about_barbershop(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
+
 async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику пользователей бота (только для администратора)"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -236,6 +223,7 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
 
 async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_TYPE, is_admin=False):
     """Начало процесса записи"""
@@ -262,12 +250,9 @@ async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
 
+
 async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора услуги"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     query = update.callback_query
     service = query.data.split("_")[1]
     context.user_data['service'] = service
@@ -322,6 +307,7 @@ async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+
 def is_date_available(date, current_time, start_time, end_time, days_ahead):
     """Проверяет, доступна ли дата для записи с учетом текущего времени"""
     # Если это сегодня
@@ -334,19 +320,16 @@ def is_date_available(date, current_time, start_time, end_time, days_ahead):
         if current_time >= end_dt:
             return False
         
-        # Если текуное время позже последнего доступного слота (за 30 минут до закрытия)
+        # Если текущее время позже последнего доступного слота (за 30 минут до закрытия)
         last_slot_time = (datetime.strptime(end_time, "%H:%M") - timedelta(minutes=30)).time()
         if current_time >= last_slot_time:
             return False
     
     return True
 
+
 async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора даты"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     query = update.callback_query
     
     # Проверяем наличие service в user_data
@@ -406,6 +389,7 @@ async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+
 def filter_available_slots(slots, current_time, start_time, end_time):
     """Фильтрует доступные слоты с учетом текущего времени"""
     filtered_slots = []
@@ -423,6 +407,7 @@ def filter_available_slots(slots, current_time, start_time, end_time):
                 filtered_slots.append(slot)
     
     return filtered_slots
+
 
 async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени - переходим к вводу телефона"""
@@ -459,12 +444,9 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return PHONE
 
+
 async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору даты при нажатии 'Назад' во время ввода телефона"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     context.user_data['awaiting_phone'] = False
     
     # Восстанавливаем клавиатуру выбора времени
@@ -510,12 +492,9 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     return ConversationHandler.END
 
+
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода номера телефона"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     context.user_data['awaiting_phone'] = False
     
     # Проверяем, отправил ли пользователь контакт или ввел текст
@@ -640,12 +619,9 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
+
 async def show_admin_manual_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи, внесенные администратором вручную"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -699,12 +675,9 @@ async def show_admin_manual_appointments(update: Update, context: ContextTypes.D
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
+
 async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи текущего пользователя"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     appointments = db.get_user_appointments(user_id)
@@ -751,12 +724,9 @@ async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
+
 async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи для отмены"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     if user_id in config.ADMIN_IDS:
@@ -779,7 +749,7 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             await update.message.reply_text(
-                "📭 У вас нет записей для отменя",
+                "📭 У вас нет записей для отмены",
                 reply_markup=reply_markup
             )
         return
@@ -814,12 +784,9 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
+
 async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает все записи с телефонами (администратор)"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -868,12 +835,9 @@ async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
+
 async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи на сегодня с телефонами (администратор)"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -912,12 +876,9 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
+
 async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление графиком работы"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id = update.effective_user.id
     
     if user_id not in config.ADMIN_IDS:
@@ -926,6 +887,7 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     schedule = db.get_week_schedule()
     
+    # ИСПРАВЛЕНО: убрано название парикмахерской
     text = "🗓️ *График работы*\n\n"
     
     for weekday in range(7):
@@ -954,297 +916,6 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
-# =============================================================================
-# НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
-# =============================================================================
-
-async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Управление администраторами"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    user_id = update.effective_user.id
-    
-    if user_id not in config.ADMIN_IDS:
-        await update.message.reply_text("❌ У вас нет доступа к этой функции")
-        return
-    
-    admins = db.get_all_admins()
-    
-    text = "👥 *Управление администраторами*\n\n"
-    text += f"📊 Всего администраторов: {len(config.ADMIN_IDS)}\n\n"
-    text += "*Текущие администраторы:*\n"
-    
-    for admin in admins:
-        admin_id, username, first_name, last_name, added_by, added_at = admin
-        admin_name = f"{first_name or ''} {last_name or ''}".strip()
-        if username:
-            admin_name += f" (@{username})"
-        
-        added_info = db.get_admin_info(added_by)
-        added_name = "система"
-        if added_info:
-            added_name = f"{added_info[2] or ''} {added_info[3] or ''}".strip()
-            if added_info[1]:
-                added_name += f" (@{added_info[1]})"
-        
-        text += f"• {admin_name} (ID: {admin_id})\n"
-        text += f"  Добавлен: {added_name}\n"
-        text += f"  Дата: {added_at[:10]}\n\n"
-    
-    # Добавляем базовых администраторов из .env
-    for base_admin_id in config.BASE_ADMIN_IDS:
-        if base_admin_id not in [admin[0] for admin in admins]:
-            text += f"• 🔒 Защищенный администратор (ID: {base_admin_id})\n"
-            text += f"  Добавлен: через настройки (.env)\n\n"
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ Добавить администратора", callback_data="add_admin")],
-        [InlineKeyboardButton("➖ Удалить администратора", callback_data="remove_admin")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if update.callback_query:
-        query = update.callback_query
-        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-
-async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало процесса добавления администратора"""
-    query = update.callback_query
-    await query.answer()
-    
-    text = (
-        "➕ *Добавление администратора*\n\n"
-        "Чтобы добавить администратора, перешлите мне любое сообщение от пользователя, "
-        "которого хотите сделать администратором, или введите его ID вручную.\n\n"
-        "*Формат:* только цифры (например: 123456789)\n\n"
-        "Или нажмите кнопку 'Отмена' для возврата:"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    
-    return ADD_ADMIN
-
-async def add_admin_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка добавления администратора"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    user_id = update.effective_user.id
-    
-    if update.message.forward_from:
-        # Если переслано сообщение от пользователя
-        new_admin = update.message.forward_from
-        admin_id = new_admin.id
-        username = new_admin.username
-        first_name = new_admin.first_name
-        last_name = new_admin.last_name
-    elif update.message.text and update.message.text.isdigit():
-        # Если введен ID вручную
-        admin_id = int(update.message.text)
-        # Пытаемся получить информацию о пользователе
-        try:
-            user = await context.bot.get_chat(admin_id)
-            username = user.username
-            first_name = user.first_name
-            last_name = user.last_name
-        except Exception as e:
-            username = None
-            first_name = "Неизвестно"
-            last_name = ""
-            logger.warning(f"Не удалось получить информацию о пользователе {admin_id}: {e}")
-    else:
-        await update.message.reply_text(
-            "❌ Неверный формат. Введите ID пользователя (только цифры) или перешлите сообщение от него.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]])
-        )
-        return ADD_ADMIN
-    
-    # Проверяем, не является ли пользователь уже администратором
-    if admin_id in config.ADMIN_IDS:
-        await update.message.reply_text(
-            f"❌ Пользователь (ID: {admin_id}) уже является администратором.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]])
-        )
-        return ConversationHandler.END
-    
-    # Добавляем администратора
-    success = db.add_admin(admin_id, username, first_name, last_name, user_id)
-    
-    if success:
-        admin_name = f"{first_name or ''} {last_name or ''}".strip()
-        if username:
-            admin_name += f" (@{username})"
-        
-        text = (
-            f"✅ *Администратор успешно добавлен!*\n\n"
-            f"👤 Имя: {admin_name}\n"
-            f"🆔 ID: {admin_id}\n\n"
-            f"Теперь пользователь имеет права администратора."
-        )
-    else:
-        text = "❌ Не удалось добавить администратора. Попробуйте еще раз."
-    
-    keyboard = [[InlineKeyboardButton("🔙 К управлению администраторами", callback_data="manage_admins")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    
-    return ConversationHandler.END
-
-async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало процесса удаления администратора"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    query = update.callback_query
-    await query.answer()
-    
-    admins = db.get_all_admins()
-    
-    if not admins:
-        text = "❌ Нет администраторов для удаления."
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text, reply_markup=reply_markup)
-        return ConversationHandler.END
-    
-    text = "➖ *Удаление администратора*\n\nВыберите администратора для удаления:\n\n"
-    keyboard = []
-    
-    for admin in admins:
-        admin_id, username, first_name, last_name, added_by, added_at = admin
-        admin_name = f"{first_name or ''} {last_name or ''}".strip()
-        if username:
-            admin_name += f" (@{username})"
-        
-        # Показываем защищенных администраторов, но делаем их недоступными для удаления
-        if admin_id in config.BASE_ADMIN_IDS:
-            keyboard.append([InlineKeyboardButton(
-                f"🔒 {admin_name} (ID: {admin_id}) - защищен", 
-                callback_data="protected_admin"
-            )])
-        else:
-            keyboard.append([InlineKeyboardButton(
-                f"❌ {admin_name} (ID: {admin_id})", 
-                callback_data=f"remove_admin_{admin_id}"
-            )])
-    
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    
-    return REMOVE_ADMIN
-
-async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение удаления администратора"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "protected_admin":
-        await query.answer("Этот администратор защищен и не может быть удален", show_alert=True)
-        return REMOVE_ADMIN
-    
-    admin_id = int(query.data.split("_")[2])
-    admin_info = db.get_admin_info(admin_id)
-    
-    if not admin_info:
-        await query.answer("Администратор не найден", show_alert=True)
-        return REMOVE_ADMIN
-    
-    admin_id, username, first_name, last_name, added_by, added_at = admin_info
-    admin_name = f"{first_name or ''} {last_name or ''}".strip()
-    if username:
-        admin_name += f" (@{username})"
-    
-    context.user_data['remove_admin_id'] = admin_id
-    
-    text = (
-        f"⚠️ *Подтверждение удаления*\n\n"
-        f"Вы действительно хотите удалить администратора?\n\n"
-        f"👤 Имя: {admin_name}\n"
-        f"🆔 ID: {admin_id}\n\n"
-        f"*Внимание:* Это действие нельзя отменить!"
-    )
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_remove_admin")],
-        [InlineKeyboardButton("❌ Нет, отменить", callback_data="manage_admins")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-    
-    return REMOVE_ADMIN
-
-async def remove_admin_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выполнение удаления администратора"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    query = update.callback_query
-    await query.answer()
-    
-    admin_id = context.user_data.get('remove_admin_id')
-    user_id = query.from_user.id
-    
-    if not admin_id:
-        await query.edit_message_text(
-            "❌ Ошибка: ID администратора не найден.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]])
-        )
-        return ConversationHandler.END
-    
-    success, message = db.remove_admin(admin_id, user_id)
-    
-    if success:
-        text = f"✅ {message}"
-    else:
-        text = f"❌ {message}"
-    
-    keyboard = [[InlineKeyboardButton("🔙 К управлению администраторами", callback_data="manage_admins")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(text, reply_markup=reply_markup)
-    
-    # Очищаем user_data
-    if 'remove_admin_id' in context.user_data:
-        del context.user_data['remove_admin_id']
-    
-    return ConversationHandler.END
-
-async def cancel_admin_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена управления администраторами"""
-    query = update.callback_query
-    await query.answer()
-    
-    await manage_admins(update, context)
-    return ConversationHandler.END
-
-# =============================================================================
-# СУЩЕСТВУЮЩИЕ ФУНКЦИИ (без изменений)
-# =============================================================================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline кнопок"""
@@ -1292,26 +963,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await schedule_end_selected(update, context)
     elif query.data == "manage_schedule":
         await manage_schedule(update, context)
-    # Новые обработчики для управления администраторами
-    elif query.data == "manage_admins":
-        await manage_admins(update, context)
-    elif query.data == "add_admin":
-        await add_admin_start(update, context)
-    elif query.data == "remove_admin":
-        await remove_admin_start(update, context)
-    elif query.data.startswith("remove_admin_"):
-        await remove_admin_confirm(update, context)
-    elif query.data == "confirm_remove_admin":
-        await remove_admin_execute(update, context)
-    elif query.data == "protected_admin":
-        await query.answer("Этот администратор защищен и не может быть удален", show_alert=True)
+
 
 async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора дня недели для настройки графика"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     query = update.callback_query
     weekday = int(query.data.split("_")[2])
     context.user_data['schedule_weekday'] = weekday
@@ -1344,6 +999,7 @@ async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=reply_markup
     )
 
+
 async def schedule_working_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора рабочего дня"""
     query = update.callback_query
@@ -1373,12 +1029,9 @@ async def schedule_working_selected(update: Update, context: ContextTypes.DEFAUL
         reply_markup=reply_markup
     )
 
+
 async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора выходного дня"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     query = update.callback_query
     weekday = int(query.data.split("_")[2])
     day_name = config.WEEKDAYS[weekday]
@@ -1394,6 +1047,7 @@ async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+
 
 async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени начала работы"""
@@ -1426,12 +1080,9 @@ async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=reply_markup
     )
 
+
 async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени окончания работы"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     query = update.callback_query
     end_time = query.data.split("_")[2]
     start_time = context.user_data['schedule_start']
@@ -1450,12 +1101,9 @@ async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=reply_markup
     )
 
+
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -1481,6 +1129,7 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await notify_admin_about_cancellation(context, appointment, user_id, is_admin=False)
         else:
             await query.answer("Запись не найдена или у вас нет прав для её отмены", show_alert=True)
+
 
 async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, appointment):
     """Уведомляет клиента об отмене записи"""
@@ -1510,16 +1159,14 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления клиенту {user_id}: {e}")
 
+
 async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, appointment, cancelled_by_user_id, is_admin=False):
     """Уведомляет администраторов об отмене записи"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     user_id, user_name, phone, service, date, time = appointment
     display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
     
     if is_admin:
+        # ИСПРАВЛЕНО: убран ID клиента
         text = (
             f"❌ *Администратор отменил запись в {config.BARBERSHOP_NAME}*\n\n"
             f"👤 Клиент: {user_name}\n"
@@ -1529,6 +1176,7 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
             f"⏰ Время: {time}"
         )
     else:
+        # ИСПРАВЛЕНО: убран ID клиента
         text = (
             f"❌ *Клиент отменил запись в {config.BARBERSHOP_NAME}*\n\n"
             f"👤 Клиент: {user_name}\n"
@@ -1550,12 +1198,9 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления об отмене в чат {chat_id}: {e}")
 
+
 async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, user_name, user_username, phone, service, date, time, appointment_id, is_manual=False):
     """Отправляет уведомление о новой записи с номером телефона"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     notification_chats = db.get_notification_chats()
     
     if not notification_chats:
@@ -1564,6 +1209,7 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
     
     manual_indicator = " 📝 (ручная запись)" if is_manual else ""
     
+    # ИСПРАВЛЕННЫЙ ТЕКСТ УВЕДОМЛЕНИЯ
     text = (
         f"🆕 *Новая запись!*{manual_indicator}\n\n"
         f"👤 *Клиент:* {user_name}\n"
@@ -1585,12 +1231,9 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления в чат {chat_id}: {e}")
 
+
 async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
     """Проверяет и уведомляет о дублирующихся записях"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
     duplicates = db.check_duplicate_appointments()
     
     if duplicates:
@@ -1600,81 +1243,25 @@ async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
             display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
             
             text = (
-                f"⚠️ *Обнаружены дублирующиеся записи!*\n\n"
+                f"⚠️ *ВНИМАНИЕ: Обнаружены дублирующиеся записи!*\n\n"
                 f"📅 Дата: {display_date}\n"
                 f"⏰ Время: {time}\n"
                 f"👥 Количество записей: {count}\n\n"
-                f"*Записи:*\n"
+                f"*Список клиентов:*\n"
             )
             
-            for i, (appt_id, user_name, phone, service) in enumerate(appointments, 1):
-                text += f"{i}. #{appt_id} - {user_name} ({phone}) - {service}\n"
+            for appt_id, user_name, phone, service in appointments:
+                text += f"• {user_name} ({phone}) - {service} (#{appt_id})\n"
             
-            notification_chats = db.get_notification_chats()
-            for chat_id in notification_chats:
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=text,
-                        parse_mode='Markdown'
-                    )
-                except Exception as e:
-                    logger.error(f"Ошибка отправки уведомления о дубликатах в чат {chat_id}: {e}")
+            text += f"\n*Рекомендуется связаться с клиентами и перенести записи*"
+            
+            await send_admin_notification(context, text)
 
-async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет напоминания о записях на завтра"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    appointments = db.get_appointments_for_reminder()
-    
-    for appointment in appointments:
-        appt_id, user_id, user_name, phone, service, date, time = appointment
-        
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
-        
-        text = (
-            f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
-            f"💇 Услуга: {service}\n"
-            f"📅 Дата: {display_date}\n"
-            f"⏰ Время: {time}\n\n"
-            f"Ждём вас в парикмахерской! 🏃‍♂️"
-        )
-        
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=text,
-                parse_mode='Markdown'
-            )
-            db.mark_reminder_sent(appt_id)
-            logger.info(f"Напоминание отправлено пользователю {user_id}")
-        except Exception as e:
-            logger.error(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
 
-async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет расписание на сегодня администраторам"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    appointments = db.get_today_appointments()
-    
-    if not appointments:
-        return
-    
-    text = f"📋 *Расписание на сегодня ({datetime.now().strftime('%d.%m.%Y')})*\n\n"
-    
-    for user_name, phone, service, time in appointments:
-        manual_indicator = " 📝" if user_name == "Администратор" else ""
-        text += f"⏰ *{time}*\n"
-        text += f"👤 {user_name}{manual_indicator}\n"
-        text += f"📞 {phone}\n"
-        text += f"💇 {service}\n"
-        text += "─" * 20 + "\n"
-    
+async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
+    """Отправляет уведомление всем администраторам"""
     notification_chats = db.get_notification_chats()
+    
     for chat_id in notification_chats:
         try:
             await context.bot.send_message(
@@ -1682,142 +1269,178 @@ async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
                 text=text,
                 parse_mode='Markdown'
             )
+            logger.info(f"Уведомление отправлено администратору в чат {chat_id}")
         except Exception as e:
-            logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
+            logger.error(f"Ошибка отправки уведомления администратору в чат {chat_id}: {e}")
 
-async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
-    """Ежедневная проверка дублирующихся записей"""
-    await check_duplicate_appointments(context)
-
-async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
-    """Периодическая очистка базы данных"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
-    
-    try:
-        # Очистка завершенных записей
-        cleanup_result = db.cleanup_completed_appointments()
-        
-        # Очистка дублирующихся расписаний
-        duplicates_cleaned = db.cleanup_duplicate_schedules()
-        
-        logger.info(f"✅ Периодическая очистка выполнена: удалено {cleanup_result['total_deleted']} записей")
-        
-    except Exception as e:
-        logger.error(f"Ошибка при периодической очистке: {e}")
-
-# =============================================================================
-# НЕДОСТАЮЩИЕ ФУНКЦИИ (добавлены)
-# =============================================================================
 
 def is_valid_phone(phone):
     """Проверяет валидность номера телефона"""
-    phone = phone.strip().replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    # Убираем все нецифровые символы кроме +
+    cleaned = re.sub(r'[^\d+]', '', phone)
     
-    # Российские форматы: +79..., 89..., +7(9...), 8(9...)
-    patterns = [
-        r'^\+7\d{10}$',  # +79123456789
-        r'^8\d{10}$',    # 89123456789
-        r'^\+7\(\d{3}\)\d{7}$',  # +7(912)3456789
-        r'^8\(\d{3}\)\d{7}$',    # 8(912)3456789
-    ]
+    # Проверяем российские форматы: +7XXXXXXXXXX или 8XXXXXXXXXX
+    if cleaned.startswith('+7') and len(cleaned) == 12:
+        return True
+    elif cleaned.startswith('8') and len(cleaned) == 11:
+        return True
+    elif cleaned.startswith('7') and len(cleaned) == 11:
+        return True
+    elif len(cleaned) == 10:  # Без кода страны
+        return True
     
-    return any(re.match(pattern, phone) for pattern in patterns)
+    return False
+
 
 def normalize_phone(phone):
-    """Нормализует номер телефона к формату +79123456789"""
-    phone = phone.strip().replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    """Нормализует номер телефона к формату +7XXXXXXXXXX"""
+    # Убираем все нецифровые символы
+    cleaned = re.sub(r'[^\d]', '', phone)
     
-    if phone.startswith('8'):
-        return '+7' + phone[1:]
-    elif phone.startswith('+7'):
-        return phone
-    elif phone.startswith('7'):
-        return '+' + phone
+    if cleaned.startswith('8') and len(cleaned) == 11:
+        return '+7' + cleaned[1:]
+    elif cleaned.startswith('7') and len(cleaned) == 11:
+        return '+' + cleaned
+    elif len(cleaned) == 10:
+        return '+7' + cleaned
     else:
-        return '+7' + phone
+        return phone
 
-def setup_handlers(application):
-    """Настройка обработчиков бота"""
-    global db
-    if db is None:
-        db = database.Database(setup_notifications=False)
+
+async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Отправка напоминаний клиентам"""
+    # Сначала очищаем прошедшие записи
+    cleanup_result = db.cleanup_completed_appointments()
     
-    # Основные обработчики команд
-    application.add_handler(CommandHandler("start", start))
+    if cleanup_result['total_deleted'] > 0:
+        logger.info(f"Автоочистка перед напоминаниями: удалено {cleanup_result['total_deleted']} записей")
     
-    # ConversationHandler для записи
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Text(["📅 Записаться на стрижку"]), 
-                          lambda u, c: make_appointment_start(u, c, is_admin=False)),
-            MessageHandler(filters.Text(["📝 Записать клиента вручную"]), 
-                          lambda u, c: make_appointment_start(u, c, is_admin=True)),
-        ],
-        states={
-            SERVICE: [CallbackQueryHandler(service_selected, pattern="^service_")],
-            DATE: [CallbackQueryHandler(date_selected, pattern="^date_")],
-            TIME: [CallbackQueryHandler(time_selected, pattern="^time_")],
-            PHONE: [
-                MessageHandler(filters.CONTACT, phone_input),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input)
-            ],
-        },
-        fallbacks=[
-            CallbackQueryHandler(show_main_menu, pattern="^main_menu$"),
-            MessageHandler(filters.Text(["🔙 Назад"]), date_selected_back),
-            CommandHandler("start", start)
-        ],
-        per_message=False
-    )
+    # Затем отправляем напоминания
+    appointments = db.get_appointments_for_reminder()
     
-    # ConversationHandler для управления администраторами
-    admin_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(add_admin_start, pattern="^add_admin$"),
-            CallbackQueryHandler(remove_admin_start, pattern="^remove_admin$"),
-        ],
-        states={
-            ADD_ADMIN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_process),
-                MessageHandler(filters.FORWARDED, add_admin_process)
-            ],
-            REMOVE_ADMIN: [
-                CallbackQueryHandler(remove_admin_confirm, pattern="^remove_admin_"),
-                CallbackQueryHandler(remove_admin_execute, pattern="^confirm_remove_admin$"),
-            ],
-        },
-        fallbacks=[
-            CallbackQueryHandler(cancel_admin_management, pattern="^manage_admins$"),
-            CallbackQueryHandler(show_main_menu, pattern="^main_menu$"),
-            CommandHandler("start", start)
-        ],
-        per_message=False
-    )
+    if not appointments:
+        logger.info("Нет записей для напоминания")
+        return
     
-    # Обработчики кнопок
-    application.add_handler(CallbackQueryHandler(button_handler))
+    for appointment in appointments:
+        appt_id, user_id, user_name, phone, service, date, time = appointment
+        
+        # Не отправляем напоминания для ручных записей администратора
+        if user_name == "Администратор":
+            continue
+            
+        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        
+        text = (
+            f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
+            f"💇 Услуга: {service}\n"
+            f"📅 Дата: {display_date}\n"
+            f"⏰ Время: {time}\n\n"
+            "Ждём вас в парикмахерской! 🏃‍♂️"
+        )
+        
+        try:
+            await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+            db.mark_reminder_sent(appt_id)
+            logger.info(f"Напоминание отправлено пользователю {user_id}")
+        except Exception as e:
+            logger.error(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
+
+
+async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
+    """Отправка ежедневного расписания администраторам"""
+    # Сначала очищаем прошедшие записи
+    cleanup_result = db.cleanup_completed_appointments()
     
-    # Обработчики текстовых сообщений
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    if cleanup_result['total_deleted'] > 0:
+        logger.info(f"Автоочистка перед расписанием: удалено {cleanup_result['total_deleted']} записей")
     
-    # Добавляем ConversationHandler'ы
-    application.add_handler(conv_handler)
-    application.add_handler(admin_conv_handler)
+    appointments = db.get_today_appointments()
+    notification_chats = db.get_notification_chats()
     
-    # Настройка Job Queue с исправленными интервалами
+    if not notification_chats:
+        logger.info("Нет настроенных чатов для ежедневного расписания")
+        return
+    
+    if not appointments:
+        text = f"📅 На сегодня в {config.BARBERSHOP_NAME} записей нет"
+    else:
+        text = f"📅 *Записи на сегодня в {config.BARBERSHOP_NAME}:*\n\n"
+        for user_name, phone, service, time in appointments:
+            manual_indicator = " 📝" if user_name == "Администратор" else ""
+            text += f"⏰ *{time}* - {user_name}{manual_indicator} ({phone}): {service}\n"
+    
+    for chat_id in notification_chats:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode='Markdown'
+            )
+            logger.info(f"Ежедневное расписание отправлено в чат {chat_id}")
+        except Exception as e:
+            logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
+
+
+async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
+    """Ежедневная проверка дублирующихся записей"""
+    # Сначала очищаем прошедшие записи
+    cleanup_result = db.cleanup_completed_appointments()
+    
+    if cleanup_result['total_deleted'] > 0:
+        logger.info(f"Автоочистка перед проверкой дубликатов: удалено {cleanup_result['total_deleted']} записей")
+    
+    await check_duplicate_appointments(context)
+
+
+async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
+    """Периодическая очистка прошедших записей (каждые 30 минут)"""
+    cleanup_result = db.cleanup_completed_appointments()
+    
+    if cleanup_result['total_deleted'] > 0:
+        logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+
+
+def setup_job_queue(application: Application):
     job_queue = application.job_queue
     
-    if job_queue:
-        # ВРЕМЕННО КОММЕНТИРУЕМ проблемные задачи для Render
-        # job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
-        # job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
-        # job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
-        
-        # Используем более редкий интервал для очистки
-        job_queue.run_repeating(periodic_cleanup, interval=3600, first=10)  # Каждый час вместо 30 минут
-        
-        logger.info("✅ Job queue setup completed")
+    # Основные задачи
+    job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
+    job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
+    job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
     
-    logger.info("✅ Bot handlers setup completed")
+    # Периодическая очистка прошедших записей (каждые 30 минут)
+    job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
+
+
+def main():
+    application = Application.builder().token(config.BOT_TOKEN).build()
+    
+    # Создаем ConversationHandler для процесса записи с вводом телефона
+    conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(time_selected, pattern="^time_"),
+        ],
+        states={
+            PHONE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
+                MessageHandler(filters.CONTACT, phone_input)
+            ],
+        },
+        fallbacks=[
+            MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
+            CommandHandler("start", start)
+        ],
+    )
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    
+    setup_job_queue(application)
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
