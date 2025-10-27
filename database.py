@@ -1,8 +1,8 @@
 # database.py
 import os
 import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime, timedelta
 import config
 from urllib.parse import urlparse
@@ -23,15 +23,7 @@ class Database:
             if self.database_url.startswith('postgres://'):
                 self.database_url = self.database_url.replace('postgres://', 'postgresql://')
             
-            result = urlparse(self.database_url)
-            conn = psycopg2.connect(
-                database=result.path[1:],
-                user=result.username,
-                password=result.password,
-                host=result.hostname,
-                port=result.port,
-                sslmode='require'
-            )
+            conn = psycopg.connect(self.database_url)
             logger.info("Успешное подключение к PostgreSQL")
             return conn
         except Exception as e:
@@ -117,16 +109,6 @@ class Database:
     def setup_default_schedule(self):
         """Устанавливает график работы по умолчанию"""
         cursor = self.conn.cursor()
-        
-        # Очищаем дубликаты
-        cursor.execute('''
-            DELETE FROM work_schedule 
-            WHERE id NOT IN (
-                SELECT MIN(id) 
-                FROM work_schedule 
-                GROUP BY weekday
-            )
-        ''')
         
         cursor.execute('SELECT COUNT(*) FROM work_schedule')
         count = cursor.fetchone()[0]
