@@ -499,6 +499,57 @@ class Database:
             'total_deleted': total_deleted
         }
 
+    # НОВЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ КОНФЛИКТОВ ПРИ ИЗМЕНЕНИИ ГРАФИКА
+
+    def get_conflicting_appointments(self, weekday, new_start_time, new_end_time, new_is_working):
+        """Находит конфликтующие записи при изменении графика"""
+        cursor = self.conn.cursor()
+        
+        if not new_is_working:
+            # Если день стал выходным - находим все будущие записи на этот день недели
+            cursor.execute('''
+                SELECT a.id, a.user_id, a.user_name, a.phone, a.service, a.appointment_date, a.appointment_time
+                FROM appointments a
+                WHERE EXTRACT(DOW FROM TO_DATE(a.appointment_date, 'YYYY-MM-DD')) = %s
+                AND TO_DATE(a.appointment_date, 'YYYY-MM-DD') >= CURRENT_DATE
+                ORDER BY a.appointment_date, a.appointment_time
+            ''', (weekday,))
+        else:
+            # Если изменилось время - находим записи вне нового графика
+            cursor.execute('''
+                SELECT a.id, a.user_id, a.user_name, a.phone, a.service, a.appointment_date, a.appointment_time
+                FROM appointments a
+                WHERE EXTRACT(DOW FROM TO_DATE(a.appointment_date, 'YYYY-MM-DD')) = %s
+                AND TO_DATE(a.appointment_date, 'YYYY-MM-DD') >= CURRENT_DATE
+                AND (
+                    a.appointment_time < %s OR a.appointment_time >= %s
+                )
+                ORDER BY a.appointment_date, a.appointment_time
+            ''', (weekday, new_start_time, new_end_time))
+        
+        return cursor.fetchall()
+
+    def cancel_appointments_by_ids(self, appointment_ids):
+        """Массово отменяет записи по списку ID"""
+        cursor = self.conn.cursor()
+        canceled_appointments = []
+        
+        for appt_id in appointment_ids:
+            cursor.execute('''
+                SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
+                FROM appointments WHERE id = %s
+            ''', (appt_id,))
+            appointment = cursor.fetchone()
+            
+            if appointment:
+                cursor.execute('DELETE FROM appointments WHERE id = %s', (appt_id,))
+                cursor.execute('DELETE FROM schedule WHERE date = %s AND time = %s', 
+                              (appointment[4], appointment[5]))
+                canceled_appointments.append(appointment)
+        
+        self.conn.commit()
+        return canceled_appointments
+
     # НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
 
     def add_admin(self, admin_id, username, first_name, last_name, added_by):

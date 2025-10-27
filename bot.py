@@ -149,7 +149,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await date_selected_back(update, context)
         else:
             await update.message.reply_text(
-                "Пожалуйста, используйте кнопки ниже для навигации",
+                "Пожалуйста, используйте кнопки ниже для навигаation",
                 reply_markup=get_main_keyboard(user_id)
             )
 
@@ -1132,6 +1132,223 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=get_main_keyboard(user_id)
         )
 
+# НОВЫЕ ФУНКЦИИ ДЛЯ ОБРАБОТКИ КОНФЛИКТОВ ПРИ ИЗМЕНЕНИИ ГРАФИКА
+
+async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора времени окончания работы с проверкой конфликтов"""
+    query = update.callback_query
+    end_time = query.data.split("_")[2]
+    start_time = context.user_data['schedule_start']
+    weekday = context.user_data['schedule_weekday']
+    day_name = config.WEEKDAYS[weekday]
+    
+    # Проверяем конфликтующие записи
+    conflicting_appointments = db.get_conflicting_appointments(weekday, start_time, end_time, True)
+    
+    if conflicting_appointments:
+        # Сохраняем новые настройки графика во временные данные
+        context.user_data['pending_schedule'] = {
+            'weekday': weekday,
+            'start_time': start_time,
+            'end_time': end_time,
+            'is_working': True
+        }
+        context.user_data['conflicting_appointments'] = conflicting_appointments
+        
+        # Показываем предупреждение о конфликтах
+        await show_schedule_conflict_warning(update, context, conflicting_appointments, day_name)
+        return
+    
+    # Если конфликтов нет - сохраняем настройки
+    db.set_work_schedule(weekday, start_time, end_time, True)
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"✅ График для *{day_name}* обновлен!\n🕐 *Время работы:* {start_time} - {end_time}",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора выходного дня с проверкой конфликтов"""
+    query = update.callback_query
+    weekday = int(query.data.split("_")[2])
+    day_name = config.WEEKDAYS[weekday]
+    
+    # Проверяем конфликтующие записи
+    conflicting_appointments = db.get_conflicting_appointments(weekday, "10:00", "20:00", False)
+    
+    if conflicting_appointments:
+        # Сохраняем новые настройки графика во временные данные
+        context.user_data['pending_schedule'] = {
+            'weekday': weekday,
+            'start_time': "10:00",
+            'end_time': "20:00", 
+            'is_working': False
+        }
+        context.user_data['conflicting_appointments'] = conflicting_appointments
+        
+        # Показываем предупреждение о конфликтах
+        await show_schedule_conflict_warning(update, context, conflicting_appointments, day_name)
+        return
+    
+    # Если конфликтов нет - сохраняем настройки
+    db.set_work_schedule(weekday, "10:00", "20:00", False)
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"✅ *{day_name}* установлен как выходной день", 
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def show_schedule_conflict_warning(update: Update, context: ContextTypes.DEFAULT_TYPE, conflicting_appointments, day_name):
+    """Показывает предупреждение о конфликтующих записях"""
+    query = update.callback_query
+    
+    # Группируем записи по датам
+    appointments_by_date = {}
+    for appt in conflicting_appointments:
+        appt_id, user_id, user_name, phone, service, date, time = appt
+        if date not in appointments_by_date:
+            appointments_by_date[date] = []
+        appointments_by_date[date].append((time, user_name, service, appt_id))
+    
+    # Формируем текст уведомления
+    text = f"⚠️ *ВНИМАНИЕ: Обнаружены конфликтующие записи!*\n\n"
+    text += f"📅 *День недели:* {day_name}\n"
+    text += f"👥 *Количество записей:* {len(conflicting_appointments)}\n\n"
+    
+    for date, appointments in appointments_by_date.items():
+        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        text += f"*{display_date}:*\n"
+        for time, user_name, service, appt_id in appointments:
+            text += f"• {time} - {user_name} ({service}) #{appt_id}\n"
+        text += "\n"
+    
+    text += "*Выберите действие:*"
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Отменить конфликтующие записи", callback_data="schedule_cancel_appointments")],
+        [InlineKeyboardButton("❌ Отменить изменение графика", callback_data="schedule_cancel_changes")],
+        [InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def handle_schedule_cancel_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик отмены конфликтующих записей"""
+    query = update.callback_query
+    
+    if 'pending_schedule' not in context.user_data or 'conflicting_appointments' not in context.user_data:
+        await query.answer("❌ Данные о конфликтах устарели", show_alert=True)
+        return
+    
+    pending_schedule = context.user_data['pending_schedule']
+    conflicting_appointments = context.user_data['conflicting_appointments']
+    
+    # Получаем ID всех конфликтующих записей
+    appointment_ids = [appt[0] for appt in conflicting_appointments]
+    
+    # Массово отменяем записи
+    canceled_appointments = db.cancel_appointments_by_ids(appointment_ids)
+    
+    # Сохраняем новый график
+    db.set_work_schedule(
+        pending_schedule['weekday'],
+        pending_schedule['start_time'],
+        pending_schedule['end_time'],
+        pending_schedule['is_working']
+    )
+    
+    # Отправляем уведомления клиентам
+    await notify_clients_about_schedule_change(context, canceled_appointments, pending_schedule)
+    
+    # Очищаем временные данные
+    context.user_data.pop('pending_schedule', None)
+    context.user_data.pop('conflicting_appointments', None)
+    
+    day_name = config.WEEKDAYS[pending_schedule['weekday']]
+    
+    if pending_schedule['is_working']:
+        schedule_info = f"{pending_schedule['start_time']} - {pending_schedule['end_time']}"
+    else:
+        schedule_info = "выходной"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"✅ *График обновлен!*\n\n"
+        f"📅 *{day_name}:* {schedule_info}\n"
+        f"❌ *Отменено записей:* {len(canceled_appointments)}\n\n"
+        f"Клиенты получили уведомления об отмене.",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def handle_schedule_cancel_changes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик отмены изменений графика"""
+    query = update.callback_query
+    
+    # Очищаем временные данные
+    context.user_data.pop('pending_schedule', None)
+    context.user_data.pop('conflicting_appointments', None)
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "❌ *Изменения графика отменены*\n\n"
+        "Расписание осталось без изменений.",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def notify_clients_about_schedule_change(context: ContextTypes.DEFAULT_TYPE, canceled_appointments, new_schedule):
+    """Уведомляет клиентов об отмене записей из-за изменения графика"""
+    day_name = config.WEEKDAYS[new_schedule['weekday']]
+    
+    if new_schedule['is_working']:
+        reason = f"изменения графика работы на {day_name} ({new_schedule['start_time']} - {new_schedule['end_time']})"
+    else:
+        reason = f"того, что {day_name} стал выходным днем"
+    
+    for appointment in canceled_appointments:
+        user_id, user_name, phone, service, date, time = appointment
+        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        
+        text = (
+            f"❌ *Ваша запись в {config.BARBERSHOP_NAME} отменена*\n\n"
+            f"💇 Услуга: {service}\n"
+            f"📅 Дата: {display_date}\n"
+            f"⏰ Время: {time}\n\n"
+            f"*Причина:* изменение графика работы\n"
+            f"*Детали:* {reason}\n\n"
+            f"Пожалуйста, запишитесь на другое удобное время.\n"
+            f"Приносим извинения за неудобства!"
+        )
+        
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=text,
+                parse_mode='Markdown'
+            )
+            logger.info(f"Уведомление об отмене отправлено клиенту {user_id}")
+        except Exception as e:
+            logger.error(f"Ошибка отправки уведомления клиенту {user_id}: {e}")
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline кнопок"""
     query = update.callback_query
@@ -1191,6 +1408,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await remove_admin_confirm(update, context)
     elif query.data.startswith("admin_remove_final_"):
         await remove_admin_final(update, context)
+    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ КОНФЛИКТОВ ГРАФИКА
+    elif query.data == "schedule_cancel_appointments":
+        await handle_schedule_cancel_appointments(update, context)
+    elif query.data == "schedule_cancel_changes":
+        await handle_schedule_cancel_changes(update, context)
 
 async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора дня недели для настройки графика"""
@@ -1255,24 +1477,6 @@ async def schedule_working_selected(update: Update, context: ContextTypes.DEFAUL
         reply_markup=reply_markup
     )
 
-async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора выходного дня"""
-    query = update.callback_query
-    weekday = int(query.data.split("_")[2])
-    day_name = config.WEEKDAYS[weekday]
-    
-    # Устанавливаем выходной день
-    db.set_work_schedule(weekday, "10:00", "20:00", False)
-    
-    keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        f"✅ *{day_name}* установлен как выходной день", 
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-
 async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени начала работы"""
     query = update.callback_query
@@ -1300,26 +1504,6 @@ async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_
     
     await query.edit_message_text(
         f"⏰ Выберите время *окончания* работы для {day_name}:\n*Начало:* {start_time}",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-
-async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора времени окончания работы"""
-    query = update.callback_query
-    end_time = query.data.split("_")[2]
-    start_time = context.user_data['schedule_start']
-    weekday = context.user_data['schedule_weekday']
-    day_name = config.WEEKDAYS[weekday]
-    
-    # Сохраняем настройки графика
-    db.set_work_schedule(weekday, start_time, end_time, True)
-    
-    keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        f"✅ График для *{day_name}* обновлен!\n🕐 *Время работы:* {start_time} - {end_time}",
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
