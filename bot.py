@@ -128,7 +128,7 @@ def get_main_keyboard(user_id):
             [KeyboardButton("👥 Управление администраторами")]
         ]
     else:
-        # Клавиатура для обычного пользователя - ДОБАВЛЕНА КНОПКА ГРАФИКА РАБОТЫ
+        # Клавиатура для обычного пользователя
         keyboard = [
             [KeyboardButton("📅 Записаться на стрижку")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
@@ -204,7 +204,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "👑 Все записи":
             await show_all_appointments(update, context)
         elif text == "📊 Записи сегодня":
-            await show_today_appointments(update, context)
+            await show_today_appointments_visual(update, context)
         elif text == "📈 Статистика":
             await show_statistics(update, context)
         elif text == "🗓️ График работы":
@@ -228,7 +228,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_my_appointments(update, context)
         elif text == "❌ Отменить запись":
             await show_cancel_appointment(update, context)
-        elif text == "🗓️ График работы":  # НОВАЯ КНОПКА ДЛЯ ПОЛЬЗОВАТЕЛЯ
+        elif text == "🗓️ График работы":
             await show_work_schedule(update, context)
         elif text == "ℹ️ О парикмахерской":
             await about_barbershop(update, context)
@@ -259,7 +259,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-# НОВАЯ ФУНКЦИЯ - ПОКАЗ ГРАФИКА РАБОТЫ ДЛЯ ПОЛЬЗОВАТЕЛЯ
 async def show_work_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает график работы для обычного пользователя"""
     schedule = db.get_week_schedule()
@@ -984,7 +983,7 @@ async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает записи на сегодня с телефонами (администратор)"""
+    """Показывает записи на сегодня с телефонами (администратор) - СТАРАЯ ВЕРСИЯ"""
     user_id = update.effective_user.id
     
     if not db.is_admin(user_id):
@@ -1023,6 +1022,351 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
+# НОВАЯ ФУНКЦИЯ - ВИЗУАЛИЗАЦИЯ РАСПИСАНИЯ НА СЕГОДНЯ
+async def show_today_appointments_visual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает расписание на сегодня в новом визуальном формате"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        return
+    
+    # Получаем записи на сегодня
+    appointments = db.get_today_appointments()
+    today = get_local_time().date()
+    today_str = today.strftime("%d.%m.%Y")
+    
+    # Получаем график работы на сегодня
+    weekday = today.weekday()
+    work_schedule = db.get_work_schedule(weekday)
+    
+    if not work_schedule or not work_schedule[0][4]:  # is_working
+        keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            query = update.callback_query
+            await query.edit_message_text(
+                f"📅 {today_str} - выходной день",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                f"📅 {today_str} - выходной день",
+                reply_markup=reply_markup
+            )
+        return
+    
+    # Создаем список всех временных слотов
+    start_time = work_schedule[0][2]  # start_time
+    end_time = work_schedule[0][3]    # end_time
+    all_slots = db.generate_time_slots(start_time, end_time)
+    
+    # Создаем словарь занятых слотов
+    booked_slots = {}
+    for user_name, phone, service, time in appointments:
+        # Форматируем телефон для отображения
+        if phone.startswith('+7'):
+            formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
+        elif phone.startswith('8'):
+            formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
+        else:
+            formatted_phone = phone
+        
+        # Сокращаем имя для отображения
+        name_parts = user_name.split()
+        if len(name_parts) >= 2:
+            short_name = f"{name_parts[0]} {name_parts[1][0]}."
+        else:
+            short_name = user_name
+        
+        booked_slots[time] = {
+            'name': short_name,
+            'phone': formatted_phone,
+            'full_name': user_name,
+            'full_phone': phone,
+            'service': service
+        }
+    
+    # Формируем текст расписания
+    header = f"📅 {today_str} | {len(appointments)}/{len(all_slots)} занято\n\n"
+    
+    schedule_text = ""
+    total_booked = 0
+    
+    for slot in all_slots:
+        if slot in booked_slots:
+            client_info = booked_slots[slot]
+            schedule_text += f"{slot} ─── 👤 {client_info['name']} {client_info['phone']} "
+            
+            # Добавляем кнопки действий для администратора
+            schedule_text += "[📞][✏️][❌]\n"
+            total_booked += 1
+        else:
+            schedule_text += f"{slot} ─── ✅ Свободно [➕]\n"
+    
+    # Добавляем статистику
+    stats_text = f"\n📊 Статус: {total_booked} записей | {len(all_slots) - total_booked} свободно"
+    
+    full_text = header + schedule_text + stats_text
+    
+    # Создаем клавиатуру с быстрыми действиями
+    keyboard = [
+        [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_today")],
+        [InlineKeyboardButton("📞 Все контакты", callback_data="all_contacts")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(full_text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(full_text, reply_markup=reply_markup)
+
+# НОВАЯ ФУНКЦИЯ - ПОКАЗ ВСЕХ КОНТАКТОВ НА СЕГОДНЯ
+async def show_all_contacts_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает все контакты на сегодня с полными номерами"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    appointments = db.get_today_appointments()
+    today = get_local_time().date()
+    today_str = today.strftime("%d.%m.%Y")
+    
+    if not appointments:
+        text = f"📞 Контакты на {today_str}\n\n📭 Нет записей на сегодня"
+    else:
+        text = f"📞 Контакты на {today_str}\n\n"
+        
+        for i, (user_name, phone, service, time) in enumerate(appointments, 1):
+            text += f"{i}. ⏰ {time} - 👤 {user_name}\n"
+            text += f"   📞 {phone}\n"
+            text += f"   💇 {service}\n"
+            text += "   ──────────────────\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📅 Назад к расписанию", callback_data="show_today_visual")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
+# НОВАЯ ФУНКЦИЯ - ОБРАБОТКА ДЕЙСТВИЙ С РАСПИСАНИЕМ
+async def handle_schedule_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик действий с расписанием (звонок, редактирование, отмена)"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    action_data = query.data
+    
+    if action_data.startswith("call_"):
+        # Показать полный номер для звонка
+        slot_time = action_data[5:]
+        await show_phone_number(update, context, slot_time)
+    
+    elif action_data.startswith("edit_"):
+        # Редактирование записи
+        slot_time = action_data[5:]
+        await edit_appointment(update, context, slot_time)
+    
+    elif action_data.startswith("cancel_slot_"):
+        # Отмена записи
+        slot_time = action_data[12:]
+        await cancel_slot_appointment(update, context, slot_time)
+    
+    elif action_data == "refresh_today":
+        # Обновить расписание
+        await show_today_appointments_visual(update, context)
+    
+    elif action_data == "all_contacts":
+        # Показать все контакты
+        await show_all_contacts_today(update, context)
+    
+    elif action_data == "show_today_visual":
+        # Вернуться к визуальному расписанию
+        await show_today_appointments_visual(update, context)
+
+async def show_phone_number(update: Update, context: ContextTypes.DEFAULT_TYPE, slot_time: str):
+    """Показывает полный номер телефона для звонка"""
+    query = update.callback_query
+    today = get_local_time().date().strftime("%Y-%m-%d")
+    
+    # Находим запись по времени
+    appointments = db.get_today_appointments()
+    target_appointment = None
+    
+    for user_name, phone, service, time in appointments:
+        if time == slot_time:
+            target_appointment = (user_name, phone, service, time)
+            break
+    
+    if not target_appointment:
+        await query.answer("❌ Запись не найдена", show_alert=True)
+        return
+    
+    user_name, phone, service, time = target_appointment
+    
+    text = (
+        f"📞 ЗВОНОК КЛИЕНТУ\n\n"
+        f"👤 Имя: {user_name}\n"
+        f"📞 Телефон: {phone}\n"
+        f"💇 Услуга: {service}\n"
+        f"⏰ Время: {slot_time}\n\n"
+        f"Нажмите на номер, чтобы скопировать: `{phone}`"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Позвонил", callback_data=f"called_{slot_time}")],
+        [InlineKeyboardButton("📅 Назад к расписанию", callback_data="show_today_visual")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def cancel_slot_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, slot_time: str):
+    """Отмена записи через расписание"""
+    query = update.callback_query
+    today = get_local_time().date().strftime("%Y-%m-%d")
+    
+    # Находим запись по времени
+    appointments = db.get_today_appointments()
+    target_appointment = None
+    
+    for user_name, phone, service, time in appointments:
+        if time == slot_time:
+            target_appointment = (user_name, phone, service, time)
+            break
+    
+    if not target_appointment:
+        await query.answer("❌ Запись не найдена", show_alert=True)
+        return
+    
+    user_name, phone, service, time = target_appointment
+    
+    # Сохраняем данные для подтверждения
+    context.user_data['cancel_slot_data'] = {
+        'slot_time': slot_time,
+        'user_name': user_name,
+        'phone': phone,
+        'service': service,
+        'date': today
+    }
+    
+    text = (
+        f"❌ ОТМЕНА ЗАПИСИ\n\n"
+        f"👤 Имя: {user_name}\n"
+        f"📞 Телефон: {phone}\n"
+        f"💇 Услуга: {service}\n"
+        f"⏰ Время: {slot_time}\n\n"
+        f"Вы уверены, что хотите отменить эту запись?"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, отменить", callback_data="confirm_cancel_slot")],
+        [InlineKeyboardButton("❌ Нет, вернуться", callback_data="show_today_visual")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
+async def confirm_cancel_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение отмены записи через расписание"""
+    query = update.callback_query
+    
+    if 'cancel_slot_data' not in context.user_data:
+        await query.answer("❌ Данные устарели", show_alert=True)
+        return
+    
+    cancel_data = context.user_data['cancel_slot_data']
+    
+    # Находим ID записи для отмены
+    appointments = db.get_all_appointments()
+    appointment_id = None
+    
+    for appt in appointments:
+        appt_id, user_name, username, phone, service, date, time = appt
+        if (date == cancel_data['date'] and time == cancel_data['slot_time'] and 
+            user_name == cancel_data['user_name']):
+            appointment_id = appt_id
+            break
+    
+    if not appointment_id:
+        await query.answer("❌ Запись не найдена", show_alert=True)
+        return
+    
+    # Отменяем запись
+    appointment = db.cancel_appointment(appointment_id)
+    if appointment:
+        # Уведомляем клиента (если это не ручная запись администратора)
+        if appointment[1] != "Администратор":
+            await notify_client_about_cancellation(context, appointment)
+        
+        # Уведомляем администраторов
+        await notify_admin_about_cancellation(context, appointment, query.from_user.id, is_admin=True)
+        
+        text = f"✅ Запись на {cancel_data['slot_time']} отменена"
+    else:
+        text = "❌ Ошибка при отмене записи"
+    
+    # Очищаем временные данные
+    context.user_data.pop('cancel_slot_data', None)
+    
+    keyboard = [
+        [InlineKeyboardButton("📅 Обновить расписание", callback_data="show_today_visual")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
+async def edit_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, slot_time: str):
+    """Редактирование записи через расписание"""
+    query = update.callback_query
+    
+    text = (
+        f"✏️ РЕДАКТИРОВАНИЕ ЗАПИСИ\n\n"
+        f"Функция редактирования записи на {slot_time} в разработке.\n\n"
+        f"Сейчас вы можете:\n"
+        f"• Отменить запись и создать новую\n"
+        f"• Связаться с клиентом для переноса"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("❌ Отменить запись", callback_data=f"cancel_slot_{slot_time}")],
+        [InlineKeyboardButton("📞 Позвонить клиенту", callback_data=f"call_{slot_time}")],
+        [InlineKeyboardButton("📅 Назад к расписанию", callback_data="show_today_visual")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
+async def called_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение звонка клиенту"""
+    query = update.callback_query
+    slot_time = query.data[7:]  # Убираем "called_"
+    
+    text = f"✅ Отмечено: звонок клиенту на {slot_time} выполнен"
+    
+    keyboard = [
+        [InlineKeyboardButton("📅 Назад к расписанию", callback_data="show_today_visual")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup)
+
 async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление графиком работы"""
     user_id = update.effective_user.id
@@ -1060,8 +1404,6 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-
-# НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
 
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление администраторами"""
@@ -1283,7 +1625,99 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=get_main_keyboard(user_id)
         )
 
-# НОВЫЕ ФУНКЦИИ ДЛЯ ОБРАБОТКИ КОНФЛИКТОВ ПРИ ИЗМЕНЕНИИ ГРАФИКА
+async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора дня недели для настройки графика"""
+    query = update.callback_query
+    weekday = int(query.data.split("_")[2])
+    context.user_data['schedule_weekday'] = weekday
+    
+    current_schedule = db.get_work_schedule(weekday)
+    day_name = config.WEEKDAYS[weekday]
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Рабочий день", callback_data=f"schedule_working_{weekday}")],
+        [InlineKeyboardButton("❌ Выходной", callback_data=f"schedule_off_{weekday}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="manage_schedule")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if current_schedule and len(current_schedule) > 0:
+        # Берем первую запись (должна быть только одна)
+        schedule_data = current_schedule[0]
+        start_time, end_time, is_working = schedule_data[2], schedule_data[3], schedule_data[4]  # start_time, end_time, is_working
+        status = "рабочий" if is_working else "выходной"
+        current_info = f"\n\n*Текущие настройки:* {status}"
+        if is_working:
+            current_info += f" ({start_time} - {end_time})"
+    else:
+        current_info = "\n\n*Настройки не заданы*"
+    
+    await query.edit_message_text(
+        f"📅 Настройка графика для *{day_name}*{current_info}\n\nВыберите тип дня:",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def schedule_working_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора рабочего дня"""
+    query = update.callback_query
+    weekday = int(query.data.split("_")[2])
+    context.user_data['schedule_weekday'] = weekday
+    day_name = config.WEEKDAYS[weekday]
+    
+    # Создаем клавиатуру для выбора времени начала
+    keyboard = []
+    times = [f"{hour:02d}:00" for hour in range(8, 18)]
+    
+    # Создаем ряды по 3 кнопки в каждом
+    row = []
+    for i, time in enumerate(times):
+        row.append(InlineKeyboardButton(time, callback_data=f"schedule_start_{time}"))
+        if (i + 1) % 3 == 0 or i == len(times) - 1:
+            keyboard.append(row)
+            row = []
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"schedule_day_{weekday}")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"⏰ Выберите время *начала* работы для {day_name}:",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора времени начала работы"""
+    query = update.callback_query
+    start_time = query.data.split("_")[2]
+    context.user_data['schedule_start'] = start_time
+    weekday = context.user_data['schedule_weekday']
+    day_name = config.WEEKDAYS[weekday]
+    
+    # Создаем клавиатуру для выбора времени окончания
+    keyboard = []
+    start_hour = int(start_time.split(":")[0])
+    times = [f"{hour:02d}:00" for hour in range(start_hour + 1, 21)]
+    
+    # Создаем ряды по 3 кнопки в каждом
+    row = []
+    for i, time in enumerate(times):
+        row.append(InlineKeyboardButton(time, callback_data=f"schedule_end_{time}"))
+        if (i + 1) % 3 == 0 or i == len(times) - 1:
+            keyboard.append(row)
+            row = []
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"schedule_working_{weekday}")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"⏰ Выберите время *окончания* работы для {day_name}:\n*Начало:* {start_time}",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
 
 async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени окончания работы с проверкой конфликтов"""
@@ -1572,100 +2006,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_schedule_cancel_appointments(update, context)
     elif query.data == "schedule_cancel_changes":
         await handle_schedule_cancel_changes(update, context)
-
-async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора дня недели для настройки графика"""
-    query = update.callback_query
-    weekday = int(query.data.split("_")[2])
-    context.user_data['schedule_weekday'] = weekday
-    
-    current_schedule = db.get_work_schedule(weekday)
-    day_name = config.WEEKDAYS[weekday]
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Рабочий день", callback_data=f"schedule_working_{weekday}")],
-        [InlineKeyboardButton("❌ Выходной", callback_data=f"schedule_off_{weekday}")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="manage_schedule")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if current_schedule and len(current_schedule) > 0:
-        # Берем первую запись (должна быть только одна)
-        schedule_data = current_schedule[0]
-        start_time, end_time, is_working = schedule_data[2], schedule_data[3], schedule_data[4]  # start_time, end_time, is_working
-        status = "рабочий" if is_working else "выходной"
-        current_info = f"\n\n*Текущие настройки:* {status}"
-        if is_working:
-            current_info += f" ({start_time} - {end_time})"
-    else:
-        current_info = "\n\n*Настройки не заданы*"
-    
-    await query.edit_message_text(
-        f"📅 Настройка графика для *{day_name}*{current_info}\n\nВыберите тип дня:",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-
-async def schedule_working_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора рабочего дня"""
-    query = update.callback_query
-    weekday = int(query.data.split("_")[2])
-    context.user_data['schedule_weekday'] = weekday
-    day_name = config.WEEKDAYS[weekday]
-    
-    # Создаем клавиатуру для выбора времени начала
-    keyboard = []
-    times = [f"{hour:02d}:00" for hour in range(8, 18)]
-    
-    # Создаем ряды по 3 кнопки в каждом
-    row = []
-    for i, time in enumerate(times):
-        row.append(InlineKeyboardButton(time, callback_data=f"schedule_start_{time}"))
-        if (i + 1) % 3 == 0 or i == len(times) - 1:
-            keyboard.append(row)
-            row = []
-    
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"schedule_day_{weekday}")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        f"⏰ Выберите время *начала* работы для {day_name}:",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-
-async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора времени начала работы"""
-    query = update.callback_query
-    start_time = query.data.split("_")[2]
-    context.user_data['schedule_start'] = start_time
-    weekday = context.user_data['schedule_weekday']
-    day_name = config.WEEKDAYS[weekday]
-    
-    # Создаем клавиатуру для выбора времени окончания
-    keyboard = []
-    start_hour = int(start_time.split(":")[0])
-    times = [f"{hour:02d}:00" for hour in range(start_hour + 1, 21)]
-    
-    # Создаем ряды по 3 кнопки в каждом
-    row = []
-    for i, time in enumerate(times):
-        row.append(InlineKeyboardButton(time, callback_data=f"schedule_end_{time}"))
-        if (i + 1) % 3 == 0 or i == len(times) - 1:
-            keyboard.append(row)
-            row = []
-    
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"schedule_working_{weekday}")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        f"⏰ Выберите время *окончания* работы для {day_name}:\n*Начало:* {start_time}",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ВИЗУАЛЬНОГО РАСПИСАНИЯ
+    elif query.data.startswith("call_"):
+        await handle_schedule_actions(update, context)
+    elif query.data.startswith("edit_"):
+        await handle_schedule_actions(update, context)
+    elif query.data.startswith("cancel_slot_"):
+        await handle_schedule_actions(update, context)
+    elif query.data == "refresh_today":
+        await handle_schedule_actions(update, context)
+    elif query.data == "all_contacts":
+        await handle_schedule_actions(update, context)
+    elif query.data == "show_today_visual":
+        await handle_schedule_actions(update, context)
+    elif query.data.startswith("called_"):
+        await called_confirmation(update, context)
+    elif query.data == "confirm_cancel_slot":
+        await confirm_cancel_slot(update, context)
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
