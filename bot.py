@@ -2656,12 +2656,15 @@ def main():
     time.sleep(3)
     
     # Создаем и настраиваем бота с обработкой ошибок
-    while True:
+    restart_count = 0
+    max_restarts = 5
+    
+    while restart_count < max_restarts:
         try:
-            logger.info("🤖 Initializing bot application...")
+            logger.info(f"🤖 Initializing bot application (attempt {restart_count + 1}/{max_restarts})...")
             application = Application.builder().token(config.BOT_TOKEN).build()
             
-            # ДОБАВИТЬ ОБРАБОТЧИК ОШИБОК
+            # Добавляем обработчик ошибок
             application.add_error_handler(error_handler)
             
             # Создаем ConversationHandler для процесса записи с вводом телефона
@@ -2679,7 +2682,7 @@ def main():
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
                     CommandHandler("start", start)
                 ],
-                per_message=False
+                per_message=True  # ИСПРАВЛЕНО: было False, теперь True
             )
             
             application.add_handler(CommandHandler("start", start))
@@ -2703,9 +2706,19 @@ def main():
                 drop_pending_updates=True
             )
             
+            # Если бот нормально остановился, выходим
+            logger.info("🤖 Bot stopped normally")
+            break
+            
         except Exception as e:
+            restart_count += 1
             logger.error(f"❌ Bot crashed with error: {e}")
-            logger.info("🔄 Restarting bot in 10 seconds...")
+            
+            if restart_count >= max_restarts:
+                logger.error(f"❌ Maximum restart attempts ({max_restarts}) reached. Giving up.")
+                break
+                
+            logger.info(f"🔄 Restarting bot in 10 seconds... (attempt {restart_count}/{max_restarts})")
             time.sleep(10)
             
             # Принудительная очистка
