@@ -14,6 +14,7 @@ class Database:
         self.database_url = config.DATABASE_URL
         self.conn = self.get_connection()
         self.create_tables()
+        self.create_admin_tables()
         self.setup_default_notifications()
         self.setup_default_schedule()
 
@@ -99,6 +100,32 @@ class Database:
         
         self.conn.commit()
         logger.info("Таблицы успешно созданы/проверены")
+
+    def create_admin_tables(self):
+        """Создает таблицу для администраторов"""
+        cursor = self.conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                admin_id BIGINT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                added_by BIGINT
+            )
+        ''')
+        
+        # Добавляем начальных администраторов из config
+        for admin_id in config.ADMIN_IDS:
+            cursor.execute('''
+                INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (admin_id) DO NOTHING
+            ''', (admin_id, 'system', 'Система', 'Администратор', 0))
+        
+        self.conn.commit()
+        logger.info("Таблица администраторов создана/проверена")
 
     def setup_default_notifications(self):
         """Настраивает уведомления по умолчанию для администраторов"""
@@ -471,6 +498,61 @@ class Database:
             'deleted_today': deleted_today,
             'total_deleted': total_deleted
         }
+
+    # НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
+
+    def add_admin(self, admin_id, username, first_name, last_name, added_by):
+        """Добавляет администратора"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (admin_id) DO UPDATE SET
+            username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name
+        ''', (admin_id, username, first_name, last_name, added_by))
+        self.conn.commit()
+        logger.info(f"Добавлен администратор {admin_id}")
+
+    def remove_admin(self, admin_id):
+        """Удаляет администратора"""
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM bot_admins WHERE admin_id = %s', (admin_id,))
+        deleted = cursor.rowcount > 0
+        self.conn.commit()
+        
+        if deleted:
+            logger.info(f"Удален администратор {admin_id}")
+        else:
+            logger.info(f"Администратор {admin_id} не найден")
+        
+        return deleted
+
+    def get_all_admins(self):
+        """Получает список всех администраторов"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT admin_id, username, first_name, last_name, added_at, added_by
+            FROM bot_admins 
+            ORDER BY added_at
+        ''')
+        return cursor.fetchall()
+
+    def is_admin(self, user_id):
+        """Проверяет, является ли пользователь администратором"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
+        return cursor.fetchone() is not None
+
+    def get_admin_info(self, admin_id):
+        """Получает информацию об администраторе"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT admin_id, username, first_name, last_name, added_at, added_by
+            FROM bot_admins WHERE admin_id = %s
+        ''', (admin_id,))
+        return cursor.fetchone()
 
     def __del__(self):
         """Закрывает соединение при удалении объекта"""
