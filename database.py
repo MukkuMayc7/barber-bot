@@ -60,6 +60,12 @@ class Database:
             )
         ''')
         
+        # Уникальный индекс для schedule (решает ошибку ON CONFLICT)
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_date_time 
+            ON schedule(date, time)
+        ''')
+        
         # Таблица admin_settings
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS admin_settings (
@@ -161,11 +167,12 @@ class Database:
         
         appointment_id = cursor.fetchone()[0]
         
-        # Обновляем расписание
+        # Обновляем расписание (ИСПРАВЛЕННЫЙ КОД)
         cursor.execute('''
             INSERT INTO schedule (date, time, available)
             VALUES (%s, %s, FALSE)
-            ON CONFLICT (date, time) DO UPDATE SET available = FALSE
+            ON CONFLICT (date, time) DO UPDATE SET 
+            available = EXCLUDED.available
         ''', (date, time))
         
         self.conn.commit()
