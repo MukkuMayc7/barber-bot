@@ -4,6 +4,8 @@ import re
 import os
 import threading
 import time
+import signal
+import sys
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
@@ -32,25 +34,40 @@ web_app = Flask(__name__)
 @web_app.route('/')
 def home():
     """Главная страница веб-сервера"""
-    return """
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Бот Парикмахерской</title>
         <meta charset="utf-8">
         <style>
-            body { font-family: Arial, sans-serif; margin: 40px; text-align: center; }
-            .status { color: green; font-weight: bold; }
+            body {{ font-family: Arial, sans-serif; margin: 40px; text-align: center; }}
+            .status {{ color: green; font-weight: bold; }}
+            .container {{ max-width: 800px; margin: 0 auto; padding: 20px; }}
         </style>
     </head>
     <body>
-        <h1>🤖 Бот Парикмахерской "Бархат"</h1>
-        <p>Статус: <span class="status">Активен ✅</span></p>
-        <p>Время сервера: {}</p>
-        <p><a href="/health">Проверка здоровья</a> | <a href="/ping">Ping</a></p>
+        <div class="container">
+            <h1>🤖 Бот Парикмахерской "Бархат"</h1>
+            <p>Статус: <span class="status">Активен ✅</span></p>
+            <p>Время сервера: {current_time}</p>
+            <p>
+                <a href="/health">Проверка здоровья</a> | 
+                <a href="/ping">Ping</a> |
+                <a href="/status">Статус</a>
+            </p>
+            <div style="margin-top: 30px; padding: 20px; background: #f5f5f5; border-radius: 10px;">
+                <h3>📊 Статистика сервиса</h3>
+                <p>• Бот работает в режиме 24/7</p>
+                <p>• Автоматические напоминания клиентам</p>
+                <p>• Визуальное расписание для администраторов</p>
+                <p>• Система управления записями</p>
+            </div>
+        </div>
     </body>
     </html>
-    """.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    """
 
 @web_app.route('/health')
 def health():
@@ -73,40 +90,90 @@ def keep_alive():
     logger.info("🔄 Keep-alive request received")
     return {"status": "awake", "timestamp": datetime.now().isoformat()}
 
+@web_app.route('/status')
+def status():
+    """Детальный статус сервиса"""
+    return {
+        "status": "running",
+        "service": "barbershop-bot", 
+        "timestamp": datetime.now().isoformat(),
+        "bot_restarts": "auto_recovery_enabled",
+        "uptime": "24/7_monitoring"
+    }
+
+@web_app.route('/deep-health')
+def deep_health():
+    """Глубокая проверка здоровья"""
+    try:
+        # Проверяем подключение к базе данных
+        db_status = "connected" if db.conn else "disconnected"
+        
+        # Проверяем токен бота
+        import requests
+        bot_token = config.BOT_TOKEN
+        bot_info_url = f"https://api.telegram.org/bot{bot_token}/getMe"
+        bot_response = requests.get(bot_info_url, timeout=10)
+        bot_status = "active" if bot_response.status_code == 200 else "inactive"
+        
+        return {
+            "status": "healthy",
+            "database": db_status,
+            "telegram_bot": bot_status,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"status": "degraded", "error": str(e)}, 500
+
 def run_web_server():
     """Запускает веб-сервер в отдельном потоке"""
     port = int(os.getenv('PORT', 5000))
     logger.info(f"🌐 Starting web server on port {port}")
     web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-def start_self_ping():
-    """Запускает фоновый поток для self-ping"""
-    def self_ping_loop():
+def start_enhanced_self_ping():
+    """Улучшенная система keep-alive"""
+    def enhanced_ping_loop():
         while True:
             try:
-                # Ждем 8 минут (меньше 15-минутного таймаута Render)
-                time.sleep(480)  # 8 минут
+                # Ждем 5 минут
+                time.sleep(300)
                 
-                # Пингуем сами себя через внутренний HTTP запрос
-                import requests
+                # Пингуем сами себя
                 port = int(os.getenv('PORT', 5000))
-                ping_url = f"http://localhost:{port}/keep-alive"
+                try:
+                    import requests
+                    local_ping = f"http://localhost:{port}/keep-alive"
+                    response = requests.get(local_ping, timeout=5)
+                    logger.info("✅ Internal self-ping successful")
+                except Exception as e:
+                    logger.warning(f"⚠️ Internal ping failed: {e}")
                 
-                response = requests.get(ping_url, timeout=10)
-                if response.status_code == 200:
-                    logger.info("🔁 Self-ping successful - keeping service awake")
-                else:
-                    logger.warning(f"Self-ping returned status: {response.status_code}")
-                    
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Self-ping connection error: {e}")
+                # Пингуем внешние сервисы чтобы создать трафик
+                external_urls = [
+                    "https://www.google.com",
+                    "https://api.telegram.org",
+                    "https://httpbin.org/get"
+                ]
+                
+                for url in external_urls:
+                    try:
+                        response = requests.get(url, timeout=10)
+                        logger.info(f"🌐 External ping to {url}: {response.status_code}")
+                    except Exception as e:
+                        logger.warning(f"🌐 External ping failed to {url}: {e}")
+                
             except Exception as e:
-                logger.error(f"Self-ping unexpected error: {e}")
+                logger.error(f"❌ Self-ping loop error: {e}")
+                time.sleep(60)  # Ждем минуту при ошибке
     
-    # Запускаем в отдельном потоке
-    ping_thread = threading.Thread(target=self_ping_loop, daemon=True)
+    ping_thread = threading.Thread(target=enhanced_ping_loop, daemon=True)
     ping_thread.start()
-    logger.info("🔁 Self-ping service started")
+    logger.info("🔁 Enhanced self-ping service started")
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов для graceful shutdown"""
+    logger.info(f"📞 Received signal {signum}, performing graceful shutdown...")
+    sys.exit(0)
 
 def get_local_time():
     """Возвращает текущее московское время (UTC+3)"""
@@ -167,7 +234,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 *Записи сегодня* - записи на сегодня\n"
             "📈 *Статистика* - статистика пользователей бота\n"
             "🗓️ *График работы* - настройка расписания\n"
-            "👥 *Управление администраторами* - управление правами доступа"
+            "👥 *Управление администраторов* - управление правами доступа"
         )
     else:
         welcome_text += (
@@ -2336,54 +2403,76 @@ def setup_job_queue(application: Application):
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
 
 def main():
-    logger.info("🚀 Starting Barbershop Bot with 24/7 support...")
+    """Главная функция с улучшенной обработкой ошибок"""
+    logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support...")
+    
+    # Регистрируем обработчики сигналов
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     # Запускаем веб-сервер в отдельном потоке
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     
-    # Запускаем self-ping сервис
-    start_self_ping()
+    # Запускаем улучшенный self-ping сервис
+    start_enhanced_self_ping()
     
     # Даем веб-серверу время на запуск
-    time.sleep(2)
+    time.sleep(3)
     
-    # Создаем и настраиваем бота
-    application = Application.builder().token(config.BOT_TOKEN).build()
-    
-    # Создаем ConversationHandler для процесса записи с вводом телефона
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(time_selected, pattern="^time_"),
-        ],
-        states={
-            PHONE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
-                MessageHandler(filters.CONTACT, phone_input)
-            ],
-        },
-        fallbacks=[
-            MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
-            CommandHandler("start", start)
-        ],
-    )
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # Обработчик ввода ID администратора
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), 
-        handle_admin_id_input
-    ))
-    
-    setup_job_queue(application)
-    
-    # Запускаем бота в режиме polling
-    logger.info("🤖 Bot starting in polling mode...")
-    application.run_polling()
+    # Создаем и настраиваем бота с обработкой ошибок
+    while True:
+        try:
+            logger.info("🤖 Initializing bot application...")
+            application = Application.builder().token(config.BOT_TOKEN).build()
+            
+            # Создаем ConversationHandler для процесса записи с вводом телефона
+            conv_handler = ConversationHandler(
+                entry_points=[
+                    CallbackQueryHandler(time_selected, pattern="^time_"),
+                ],
+                states={
+                    PHONE: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
+                        MessageHandler(filters.CONTACT, phone_input)
+                    ],
+                },
+                fallbacks=[
+                    MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
+                    CommandHandler("start", start)
+                ],
+                per_message=False
+            )
+            
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(conv_handler)
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            application.add_handler(CallbackQueryHandler(button_handler))
+            
+            # Обработчик ввода ID администратора
+            application.add_handler(MessageHandler(
+                filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), 
+                handle_admin_id_input
+            ))
+            
+            setup_job_queue(application)
+            
+            # Запускаем бота в режиме polling с обработкой ошибок
+            logger.info("🤖 Bot starting in polling mode...")
+            application.run_polling(
+                poll_interval=3.0,
+                timeout=20,
+                drop_pending_updates=True
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Bot crashed with error: {e}")
+            logger.info("🔄 Restarting bot in 10 seconds...")
+            time.sleep(10)
+            
+            # Принудительная очистка
+            import gc
+            gc.collect()
 
 if __name__ == "__main__":
     main()
