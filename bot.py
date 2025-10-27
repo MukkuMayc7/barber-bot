@@ -1,6 +1,10 @@
 # bot.py
 import logging
 import re
+import os
+import threading
+import time
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -21,6 +25,88 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 db = database.Database()
+
+# Создаем Flask приложение для веб-сервера
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    """Главная страница веб-сервера"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Бот Парикмахерской</title>
+        <meta charset="utf-8">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; text-align: center; }
+            .status { color: green; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <h1>🤖 Бот Парикмахерской "Бархат"</h1>
+        <p>Статус: <span class="status">Активен ✅</span></p>
+        <p>Время сервера: {}</p>
+        <p><a href="/health">Проверка здоровья</a> | <a href="/ping">Ping</a></p>
+    </body>
+    </html>
+    """.format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+@web_app.route('/health')
+def health():
+    """Проверка здоровья сервиса"""
+    return {
+        "status": "healthy",
+        "service": "barbershop-bot",
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected" if db.conn else "disconnected"
+    }
+
+@web_app.route('/ping')
+def ping():
+    """Простой ping-эндпоинт для self-ping"""
+    return "pong"
+
+@web_app.route('/keep-alive')
+def keep_alive():
+    """Эндпоинт для поддержания активности"""
+    logger.info("🔄 Keep-alive request received")
+    return {"status": "awake", "timestamp": datetime.now().isoformat()}
+
+def run_web_server():
+    """Запускает веб-сервер в отдельном потоке"""
+    port = int(os.getenv('PORT', 5000))
+    logger.info(f"🌐 Starting web server on port {port}")
+    web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+def start_self_ping():
+    """Запускает фоновый поток для self-ping"""
+    def self_ping_loop():
+        while True:
+            try:
+                # Ждем 8 минут (меньше 15-минутного таймаута Render)
+                time.sleep(480)  # 8 минут
+                
+                # Пингуем сами себя через внутренний HTTP запрос
+                import requests
+                port = int(os.getenv('PORT', 5000))
+                ping_url = f"http://localhost:{port}/keep-alive"
+                
+                response = requests.get(ping_url, timeout=10)
+                if response.status_code == 200:
+                    logger.info("🔁 Self-ping successful - keeping service awake")
+                else:
+                    logger.warning(f"Self-ping returned status: {response.status_code}")
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Self-ping connection error: {e}")
+            except Exception as e:
+                logger.error(f"Self-ping unexpected error: {e}")
+    
+    # Запускаем в отдельном потоке
+    ping_thread = threading.Thread(target=self_ping_loop, daemon=True)
+    ping_thread.start()
+    logger.info("🔁 Self-ping service started")
 
 def get_local_time():
     """Возвращает текущее московское время (UTC+3)"""
@@ -149,7 +235,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await date_selected_back(update, context)
         else:
             await update.message.reply_text(
-                "Пожалуйста, используйте кнопки ниже для навигаation",
+                "Пожалуйста, используйте кнопки ниже для навигации",
                 reply_markup=get_main_keyboard(user_id)
             )
 
@@ -1807,6 +1893,19 @@ def setup_job_queue(application: Application):
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
 
 def main():
+    logger.info("🚀 Starting Barbershop Bot with 24/7 support...")
+    
+    # Запускаем веб-сервер в отдельном потоке
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    
+    # Запускаем self-ping сервис
+    start_self_ping()
+    
+    # Даем веб-серверу время на запуск
+    time.sleep(2)
+    
+    # Создаем и настраиваем бота
     application = Application.builder().token(config.BOT_TOKEN).build()
     
     # Создаем ConversationHandler для процесса записи с вводом телефона
@@ -1838,6 +1937,9 @@ def main():
     ))
     
     setup_job_queue(application)
+    
+    # Запускаем бота в режиме polling
+    logger.info("🤖 Bot starting in polling mode...")
     application.run_polling()
 
 if __name__ == "__main__":
