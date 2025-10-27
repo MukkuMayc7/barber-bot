@@ -2657,11 +2657,12 @@ def main():
     
     # Создаем и настраиваем бота с обработкой ошибок
     restart_count = 0
-    max_restarts = 5
     
-    while restart_count < max_restarts:
+    while True:
         try:
-            logger.info(f"🤖 Initializing bot application (attempt {restart_count + 1}/{max_restarts})...")
+            restart_count += 1
+            logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
+            
             application = Application.builder().token(config.BOT_TOKEN).build()
             
             # Добавляем обработчик ошибок
@@ -2682,7 +2683,7 @@ def main():
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
                     CommandHandler("start", start)
                 ],
-                per_message=True  # ИСПРАВЛЕНО: было False, теперь True
+                per_message=False  # ИСПРАВЛЕНО: вернули False
             )
             
             application.add_handler(CommandHandler("start", start))
@@ -2707,19 +2708,16 @@ def main():
             )
             
             # Если бот нормально остановился, выходим
-            logger.info("🤖 Bot stopped normally")
+            logger.info("🤖 Bot stopped normally - no restart needed")
             break
             
         except Exception as e:
-            restart_count += 1
             logger.error(f"❌ Bot crashed with error: {e}")
             
-            if restart_count >= max_restarts:
-                logger.error(f"❌ Maximum restart attempts ({max_restarts}) reached. Giving up.")
-                break
-                
-            logger.info(f"🔄 Restarting bot in 10 seconds... (attempt {restart_count}/{max_restarts})")
-            time.sleep(10)
+            # Увеличиваем время ожидания после каждого перезапуска
+            wait_time = min(10 * restart_count, 300)  # Максимум 5 минут
+            logger.info(f"🔄 Restarting bot in {wait_time} seconds... (restart #{restart_count})")
+            time.sleep(wait_time)
             
             # Принудительная очистка
             import gc
