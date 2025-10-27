@@ -218,9 +218,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     logger.error(f"Exception while handling an update: {error}", exc_info=error)
-            return
-    
-    logger.error(f"Exception while handling an update: {error}", exc_info=error)
 
 def get_local_time():
     """Возвращает текущее московское время (UTC+3)"""
