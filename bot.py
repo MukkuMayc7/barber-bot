@@ -258,8 +258,17 @@ async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['service'] = service
     
     keyboard = []
-    today = datetime.now().date()
-    current_time = datetime.now().time()
+    from datetime import datetime, timedelta, timezone
+
+def get_local_time():
+    """Возвращает текущее московское время (UTC+3)"""
+    utc_now = datetime.now(timezone.utc)
+    moscow_time = utc_now + timedelta(hours=config.TIMEZONE_OFFSET)
+    return moscow_time
+
+    # Использование:
+    today = get_local_time().date()
+    current_time = get_local_time().time()
     
     # ПОКАЗЫВАЕМ 7 РАБОЧИХ ДНЕЙ ВПЕРЕД С УЧЕТОМ ТЕКУЩЕГО ВРЕМЕНИ
     days_shown = 0
@@ -351,9 +360,9 @@ async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     available_slots = db.get_available_slots(date)
     
     # Фильтруем слоты с учетом текущего времени для сегодняшней даты
-    today = datetime.now().date()
+    today = get_local_time().date()
     selected_date = datetime.strptime(date, "%Y-%m-%d").date()
-    current_time = datetime.now().time()
+    current_time = get_local_time().time()
     
     if selected_date == today:
         # Получаем график работы на сегодня

@@ -32,3 +32,7 @@ CLEANUP_DAYS_OLD = 30
 
 # Настройки базы данных
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///barbershop.db')
+
+# Настройки времени
+import os
+TIMEZONE_OFFSET = 3  # Moscow time UTC+3
