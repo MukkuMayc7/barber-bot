@@ -324,6 +324,11 @@ def is_date_available(date, current_time, start_time, end_time, days_ahead):
         last_slot_time = (datetime.strptime(end_time, "%H:%M") - timedelta(minutes=30)).time()
         if current_time >= last_slot_time:
             return False
+        
+        # ДОБАВЛЕНО: Если текущее время позже времени начала работы, показываем дату
+        # но слоты будут отфильтрованы позже в filter_available_slots
+        if current_time >= start_dt:
+            return True  # Показываем дату, но слоты будут отфильтрованы
     
     return True
 
