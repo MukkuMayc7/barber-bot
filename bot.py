@@ -13,9 +13,11 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes, ConversationHandler,
     JobQueue
 )
+from telegram.error import BadRequest, TelegramError
 from datetime import datetime, timedelta, timezone
 import database
 import config
+import httpx
 
 # Состояния для ConversationHandler
 SERVICE, DATE, TIME, PHONE = range(4)
@@ -109,11 +111,14 @@ def deep_health():
         db_status = "connected" if db.conn else "disconnected"
         
         # Проверяем токен бота
-        import requests
         bot_token = config.BOT_TOKEN
         bot_info_url = f"https://api.telegram.org/bot{bot_token}/getMe"
-        bot_response = requests.get(bot_info_url, timeout=10)
-        bot_status = "active" if bot_response.status_code == 200 else "inactive"
+        try:
+            with httpx.Client(timeout=10) as client:
+                bot_response = client.get(bot_info_url)
+            bot_status = "active" if bot_response.status_code == 200 else "inactive"
+        except Exception:
+            bot_status = "connection_error"
         
         return {
             "status": "healthy",
@@ -141,10 +146,18 @@ def start_enhanced_self_ping():
                 # Пингуем сами себя
                 port = int(os.getenv('PORT', 5000))
                 try:
-                    import requests
-                    local_ping = f"http://localhost:{port}/keep-alive"
-                    response = requests.get(local_ping, timeout=5)
-                    logger.info("✅ Internal self-ping successful")
+                    # Попробуем использовать requests если установлен
+                    try:
+                        import requests
+                        local_ping = f"http://localhost:{port}/keep-alive"
+                        response = requests.get(local_ping, timeout=5)
+                        logger.info("✅ Internal self-ping successful (requests)")
+                    except ImportError:
+                        # Используем httpx как альтернативу
+                        local_ping = f"http://localhost:{port}/keep-alive"
+                        with httpx.Client(timeout=5) as client:
+                            response = client.get(local_ping)
+                        logger.info("✅ Internal self-ping successful (httpx)")
                 except Exception as e:
                     logger.warning(f"⚠️ Internal ping failed: {e}")
                 
@@ -157,8 +170,15 @@ def start_enhanced_self_ping():
                 
                 for url in external_urls:
                     try:
-                        response = requests.get(url, timeout=10)
-                        logger.info(f"🌐 External ping to {url}: {response.status_code}")
+                        # Используем тот же подход что и для внутреннего пинга
+                        try:
+                            import requests
+                            response = requests.get(url, timeout=10)
+                            logger.info(f"🌐 External ping to {url}: {response.status_code} (requests)")
+                        except ImportError:
+                            with httpx.Client(timeout=10) as client:
+                                response = client.get(url)
+                            logger.info(f"🌐 External ping to {url}: {response.status_code} (httpx)")
                     except Exception as e:
                         logger.warning(f"🌐 External ping failed to {url}: {e}")
                 
@@ -174,6 +194,24 @@ def signal_handler(signum, frame):
     """Обработчик сигналов для graceful shutdown"""
     logger.info(f"📞 Received signal {signum}, performing graceful shutdown...")
     sys.exit(0)
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Глобальный обработчик ошибок"""
+    error = context.error
+    
+    if isinstance(error, BadRequest):
+        if "message is not modified" in str(error).lower():
+            # Игнорируем эту ошибку
+            logger.debug("Message not modified - ignoring")
+            return
+        elif "chat not found" in str(error).lower():
+            logger.warning(f"Chat not found: {error}")
+            return
+        elif "message to edit not found" in str(error).lower():
+            logger.warning(f"Message to edit not found: {error}")
+            return
+    
+    logger.error(f"Exception while handling an update: {error}", exc_info=error)
 
 def get_local_time():
     """Возвращает текущее московское время (UTC+3)"""
@@ -1092,105 +1130,123 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
 # НОВАЯ ФУНКЦИЯ - ВИЗУАЛИЗАЦИЯ РАСПИСАНИЯ НА СЕГОДНЯ
 async def show_today_appointments_visual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает расписание на сегодня в новом визуальном формате"""
-    user_id = update.effective_user.id
-    
-    if not db.is_admin(user_id):
-        await update.message.reply_text("❌ У вас нет доступа к этой функции")
-        return
-    
-    # Получаем записи на сегодня
-    appointments = db.get_today_appointments()
-    today = get_local_time().date()
-    today_str = today.strftime("%d.%m.%Y")
-    
-    # Получаем график работы на сегодня
-    weekday = today.weekday()
-    work_schedule = db.get_work_schedule(weekday)
-    
-    if not work_schedule or not work_schedule[0][4]:  # is_working
-        keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+    try:
+        user_id = update.effective_user.id
+        
+        if not db.is_admin(user_id):
+            if update.callback_query:
+                await update.callback_query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+            else:
+                await update.message.reply_text("❌ У вас нет доступа к этой функции")
+            return
+        
+        # Получаем записи на сегодня
+        appointments = db.get_today_appointments()
+        today = get_local_time().date()
+        today_str = today.strftime("%d.%m.%Y")
+        
+        # Получаем график работы на сегодня
+        weekday = today.weekday()
+        work_schedule = db.get_work_schedule(weekday)
+        
+        if not work_schedule or not work_schedule[0][4]:  # is_working
+            keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            if update.callback_query:
+                query = update.callback_query
+                await query.edit_message_text(
+                    f"📅 {today_str} - выходной день",
+                    reply_markup=reply_markup
+                )
+            else:
+                await update.message.reply_text(
+                    f"📅 {today_str} - выходной день",
+                    reply_markup=reply_markup
+                )
+            return
+        
+        # Создаем список всех временных слотов
+        start_time = work_schedule[0][2]  # start_time
+        end_time = work_schedule[0][3]    # end_time
+        all_slots = db.generate_time_slots(start_time, end_time)
+        
+        # Создаем словарь занятых слотов
+        booked_slots = {}
+        for user_name, phone, service, time in appointments:
+            # Форматируем телефон для отображения
+            if phone.startswith('+7'):
+                formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
+            elif phone.startswith('8'):
+                formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
+            else:
+                formatted_phone = phone
+            
+            # Сокращаем имя для отображения
+            name_parts = user_name.split()
+            if len(name_parts) >= 2:
+                short_name = f"{name_parts[0]} {name_parts[1][0]}."
+            else:
+                short_name = user_name
+            
+            booked_slots[time] = {
+                'name': short_name,
+                'phone': formatted_phone,
+                'full_name': user_name,
+                'full_phone': phone,
+                'service': service
+            }
+        
+        # Формируем текст расписания
+        header = f"📅 {today_str} | {len(appointments)}/{len(all_slots)} занято\n\n"
+        
+        schedule_text = ""
+        total_booked = 0
+        
+        for slot in all_slots:
+            if slot in booked_slots:
+                client_info = booked_slots[slot]
+                schedule_text += f"{slot} ─── 👤 {client_info['name']} {client_info['phone']} "
+                
+                # Добавляем кнопки действий для администратора
+                schedule_text += "[📞][✏️][❌]\n"
+                total_booked += 1
+            else:
+                schedule_text += f"{slot} ─── ✅ Свободно [➕]\n"
+        
+        # Добавляем статистику
+        stats_text = f"\n📊 Статус: {total_booked} записей | {len(all_slots) - total_booked} свободно"
+        
+        full_text = header + schedule_text + stats_text
+        
+        # Создаем клавиатуру с быстрыми действиями
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_today")],
+            [InlineKeyboardButton("📞 Все контакты", callback_data="all_contacts")],
+            [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+        ]
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         if update.callback_query:
             query = update.callback_query
-            await query.edit_message_text(
-                f"📅 {today_str} - выходной день",
-                reply_markup=reply_markup
-            )
+            try:
+                await query.edit_message_text(full_text, reply_markup=reply_markup)
+            except BadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    # Игнорируем эту ошибку - сообщение уже актуально
+                    logger.debug("Message not modified in show_today_appointments_visual - ignoring")
+                else:
+                    raise
         else:
-            await update.message.reply_text(
-                f"📅 {today_str} - выходной день",
-                reply_markup=reply_markup
-            )
-        return
-    
-    # Создаем список всех временных слотов
-    start_time = work_schedule[0][2]  # start_time
-    end_time = work_schedule[0][3]    # end_time
-    all_slots = db.generate_time_slots(start_time, end_time)
-    
-    # Создаем словарь занятых слотов
-    booked_slots = {}
-    for user_name, phone, service, time in appointments:
-        # Форматируем телефон для отображения
-        if phone.startswith('+7'):
-            formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
-        elif phone.startswith('8'):
-            formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
-        else:
-            formatted_phone = phone
-        
-        # Сокращаем имя для отображения
-        name_parts = user_name.split()
-        if len(name_parts) >= 2:
-            short_name = f"{name_parts[0]} {name_parts[1][0]}."
-        else:
-            short_name = user_name
-        
-        booked_slots[time] = {
-            'name': short_name,
-            'phone': formatted_phone,
-            'full_name': user_name,
-            'full_phone': phone,
-            'service': service
-        }
-    
-    # Формируем текст расписания
-    header = f"📅 {today_str} | {len(appointments)}/{len(all_slots)} занято\n\n"
-    
-    schedule_text = ""
-    total_booked = 0
-    
-    for slot in all_slots:
-        if slot in booked_slots:
-            client_info = booked_slots[slot]
-            schedule_text += f"{slot} ─── 👤 {client_info['name']} {client_info['phone']} "
+            await update.message.reply_text(full_text, reply_markup=reply_markup)
             
-            # Добавляем кнопки действий для администратора
-            schedule_text += "[📞][✏️][❌]\n"
-            total_booked += 1
+    except Exception as e:
+        logger.error(f"Ошибка в show_today_appointments_visual: {e}")
+        if update.callback_query:
+            await update.callback_query.edit_message_text("❌ Ошибка при загрузке расписания")
         else:
-            schedule_text += f"{slot} ─── ✅ Свободно [➕]\n"
-    
-    # Добавляем статистику
-    stats_text = f"\n📊 Статус: {total_booked} записей | {len(all_slots) - total_booked} свободно"
-    
-    full_text = header + schedule_text + stats_text
-    
-    # Создаем клавиатуру с быстрыми действиями
-    keyboard = [
-        [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_today")],
-        [InlineKeyboardButton("📞 Все контакты", callback_data="all_contacts")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if update.callback_query:
-        query = update.callback_query
-        await query.edit_message_text(full_text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(full_text, reply_markup=reply_markup)
+            await update.message.reply_text("❌ Ошибка при загрузке расписания")
 
 # НОВАЯ ФУНКЦИЯ - ПОКАЗ ВСЕХ КОНТАКТОВ НА СЕГОДНЯ
 async def show_all_contacts_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1223,7 +1279,13 @@ async def show_all_contacts_today(update: Update, context: ContextTypes.DEFAULT_
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in show_all_contacts_today - ignoring")
+        else:
+            raise
 
 # НОВАЯ ФУНКЦИЯ - ОБРАБОТКА ДЕЙСТВИЙ С РАСПИСАНИЕМ
 async def handle_schedule_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1300,7 +1362,13 @@ async def show_phone_number(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in show_phone_number - ignoring")
+        else:
+            raise
 
 async def cancel_slot_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, slot_time: str):
     """Отмена записи через расписание"""
@@ -1346,7 +1414,13 @@ async def cancel_slot_appointment(update: Update, context: ContextTypes.DEFAULT_
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in cancel_slot_appointment - ignoring")
+        else:
+            raise
 
 async def confirm_cancel_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение отмены записи через расписание"""
@@ -1377,8 +1451,7 @@ async def confirm_cancel_slot(update: Update, context: ContextTypes.DEFAULT_TYPE
     appointment = db.cancel_appointment(appointment_id)
     if appointment:
         # Уведомляем клиента (если это не ручная запись администратора)
-        if appointment[1] != "Администратор":
-            await notify_client_about_cancellation(context, appointment)
+        await notify_client_about_cancellation(context, appointment)
         
         # Уведомляем администраторов
         await notify_admin_about_cancellation(context, appointment, query.from_user.id, is_admin=True)
@@ -1396,7 +1469,13 @@ async def confirm_cancel_slot(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in confirm_cancel_slot - ignoring")
+        else:
+            raise
 
 async def edit_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, slot_time: str):
     """Редактирование записи через расписание"""
@@ -1417,7 +1496,13 @@ async def edit_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in edit_appointment - ignoring")
+        else:
+            raise
 
 async def called_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение звонка клиенту"""
@@ -1432,7 +1517,13 @@ async def called_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in called_confirmation - ignoring")
+        else:
+            raise
 
 async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление графиком работы"""
@@ -1528,27 +1619,39 @@ async def show_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        text,
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in show_admin_list - ignoring")
+        else:
+            raise
 
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало процесса добавления администратора"""
     query = update.callback_query
     context.user_data['awaiting_admin_id'] = True
     
-    await query.edit_message_text(
-        "➕ *Добавление администратора*\n\n"
-        "Введите ID пользователя, которого хотите сделать администратором:\n\n"
-        "*Как получить ID пользователя?*\n"
-        "1. Попросите пользователя написать боту @userinfobot\n"
-        "2. Или перешлите любое сообщение от пользователя боту @userinfobot\n"
-        "3. Бот покажет ID пользователя\n\n"
-        "*Введите числовой ID:*",
-        parse_mode='Markdown'
-    )
+    try:
+        await query.edit_message_text(
+            "➕ *Добавление администратора*\n\n"
+            "Введите ID пользователя, которого хотите сделать администратором:\n\n"
+            "*Как получить ID пользователя?*\n"
+            "1. Попросите пользователя написать боту @userinfobot\n"
+            "2. Или перешлите любое сообщение от пользователя боту @userinfobot\n"
+            "3. Бот покажет ID пользователя\n\n"
+            "*Введите числовой ID:*",
+            parse_mode='Markdown'
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in add_admin_start - ignoring")
+        else:
+            raise
 
 async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало процесса удаления администратора"""
@@ -1575,12 +1678,18 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        "➖ *Удаление администратора*\n\n"
-        "Выберите администратора для удаления:",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            "➖ *Удаление администратора*\n\n"
+            "Выберите администратора для удаления:",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in remove_admin_start - ignoring")
+        else:
+            raise
 
 async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение удаления администратора"""
@@ -1604,15 +1713,21 @@ async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        f"⚠️ *Подтверждение удаления*\n\n"
-        f"Вы действительно хотите удалить администратора?\n\n"
-        f"👤 *Имя:* {display_name}\n"
-        f"🆔 *ID:* {admin_id}\n\n"
-        f"*Внимание:* После удаления пользователь потеряет доступ к админ-панели.",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"⚠️ *Подтверждение удаления*\n\n"
+            f"Вы действительно хотите удалить администратора?\n\n"
+            f"👤 *Имя:* {display_name}\n"
+            f"🆔 *ID:* {admin_id}\n\n"
+            f"*Внимание:* После удаления пользователь потеряет доступ к админ-панели.",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in remove_admin_confirm - ignoring")
+        else:
+            raise
 
 async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Финальное удаление администратора"""
@@ -1628,9 +1743,21 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE)
     deleted = db.remove_admin(admin_id)
     
     if deleted:
-        await query.edit_message_text(f"✅ Администратор с ID {admin_id} удален")
+        try:
+            await query.edit_message_text(f"✅ Администратор с ID {admin_id} удален")
+        except BadRequest as e:
+            if "message is not modified" in str(e).lower():
+                logger.debug("Message not modified in remove_admin_final - ignoring")
+            else:
+                raise
     else:
-        await query.edit_message_text("❌ Администратор не найден")
+        try:
+            await query.edit_message_text("❌ Администратор не найден")
+        except BadRequest as e:
+            if "message is not modified" in str(e).lower():
+                logger.debug("Message not modified in remove_admin_final - ignoring")
+            else:
+                raise
 
 async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода ID администратора"""
@@ -1720,11 +1847,17 @@ async def schedule_day_selected(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         current_info = "\n\n*Настройки не заданы*"
     
-    await query.edit_message_text(
-        f"📅 Настройка графика для *{day_name}*{current_info}\n\nВыберите тип дня:",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"📅 Настройка графика для *{day_name}*{current_info}\n\nВыберите тип дня:",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in schedule_day_selected - ignoring")
+        else:
+            raise
 
 async def schedule_working_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора рабочего дня"""
@@ -1749,11 +1882,17 @@ async def schedule_working_selected(update: Update, context: ContextTypes.DEFAUL
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        f"⏰ Выберите время *начала* работы для {day_name}:",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"⏰ Выберите время *начала* работы для {day_name}:",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in schedule_working_selected - ignoring")
+        else:
+            raise
 
 async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени начала работы"""
@@ -1780,11 +1919,17 @@ async def schedule_start_selected(update: Update, context: ContextTypes.DEFAULT_
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        f"⏰ Выберите время *окончания* работы для {day_name}:\n*Начало:* {start_time}",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"⏰ Выберите время *окончания* работы для {day_name}:\n*Начало:* {start_time}",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in schedule_start_selected - ignoring")
+        else:
+            raise
 
 async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора времени окончания работы с проверкой конфликтов"""
@@ -1817,11 +1962,17 @@ async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        f"✅ График для *{day_name}* обновлен!\n🕐 *Время работы:* {start_time} - {end_time}",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ График для *{day_name}* обновлен!\n🕐 *Время работы:* {start_time} - {end_time}",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in schedule_end_selected - ignoring")
+        else:
+            raise
 
 async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора выходного дня с проверкой конфликтов"""
@@ -1852,11 +2003,17 @@ async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        f"✅ *{day_name}* установлен как выходной день", 
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ *{day_name}* установлен как выходной день", 
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in schedule_off_selected - ignoring")
+        else:
+            raise
 
 async def show_schedule_conflict_warning(update: Update, context: ContextTypes.DEFAULT_TYPE, conflicting_appointments, day_name):
     """Показывает предупреждение о конфликтующих записях"""
@@ -1896,11 +2053,17 @@ async def show_schedule_conflict_warning(update: Update, context: ContextTypes.D
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        text,
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in show_schedule_conflict_warning - ignoring")
+        else:
+            raise
 
 async def handle_schedule_cancel_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик отмены конфликтующих записей"""
@@ -1944,14 +2107,20 @@ async def handle_schedule_cancel_appointments(update: Update, context: ContextTy
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        f"✅ *График обновлен!*\n\n"
-        f"📅 *{day_name}:* {schedule_info}\n"
-        f"❌ *Отменено записей:* {len(canceled_appointments)}\n\n"
-        f"Клиенты получили уведомления об отмене.",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ *График обновлен!*\n\n"
+            f"📅 *{day_name}:* {schedule_info}\n"
+            f"❌ *Отменено записей:* {len(canceled_appointments)}\n\n"
+            f"Клиенты получили уведомления об отмене.",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in handle_schedule_cancel_appointments - ignoring")
+        else:
+            raise
 
 async def handle_schedule_cancel_changes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик отмены изменений графика"""
@@ -1964,12 +2133,18 @@ async def handle_schedule_cancel_changes(update: Update, context: ContextTypes.D
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(
-        "❌ *Изменения графика отменены*\n\n"
-        "Расписание осталось без изменений.",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    try:
+        await query.edit_message_text(
+            "❌ *Изменения графика отменены*\n\n"
+            "Расписание осталось без изменений.",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in handle_schedule_cancel_changes - ignoring")
+        else:
+            raise
 
 async def notify_clients_about_schedule_change(context: ContextTypes.DEFAULT_TYPE, canceled_appointments, new_schedule):
     """Уведомляет клиентов об отмене записей из-за изменения графика"""
@@ -1983,6 +2158,12 @@ async def notify_clients_about_schedule_change(context: ContextTypes.DEFAULT_TYP
     
     for appointment in canceled_appointments:
         user_id, user_name, phone, service, date, time = appointment
+        
+        # Пропускаем уведомления для невалидных user_id
+        if user_id == 0 or user_id is None or user_name == "Администратор":
+            logger.info(f"Пропуск уведомления для ручной записи администратора: user_id={user_id}")
+            continue
+            
         # ИСПРАВЛЕНО: правильное отображение дня недели
         selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
         weekday = selected_date_obj.weekday()
@@ -2006,6 +2187,11 @@ async def notify_clients_about_schedule_change(context: ContextTypes.DEFAULT_TYP
                 parse_mode='Markdown'
             )
             logger.info(f"Уведомление об отмене отправлено клиенту {user_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for user {user_id}, skipping notification")
+            else:
+                logger.error(f"BadRequest при отправке уведомления клиенту {user_id}: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления клиенту {user_id}: {e}")
 
@@ -2103,18 +2289,36 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if db.is_admin(user_id):
             appointment = db.cancel_appointment(appointment_id)
             if appointment:
-                await query.edit_message_text(f"✅ Запись #{appointment_id} отменена администратором")
+                try:
+                    await query.edit_message_text(f"✅ Запись #{appointment_id} отменена администратором")
+                except BadRequest as e:
+                    if "message is not modified" in str(e).lower():
+                        logger.debug("Message not modified in cancel_appointment - ignoring")
+                    else:
+                        raise
                 await notify_client_about_cancellation(context, appointment)
                 await notify_admin_about_cancellation(context, appointment, user_id, is_admin=True)
             else:
-                await query.edit_message_text("❌ Запись не найдена")
+                try:
+                    await query.edit_message_text("❌ Запись не найдена")
+                except BadRequest as e:
+                    if "message is not modified" in str(e).lower():
+                        logger.debug("Message not modified in cancel_appointment - ignoring")
+                    else:
+                        raise
         else:
             await query.answer("У вас нет прав для отмены этой записи", show_alert=True)
     else:
         # Отмена обычным пользователем
         appointment = db.cancel_appointment(appointment_id, user_id)
         if appointment:
-            await query.edit_message_text(f"✅ Ваша запись #{appointment_id} отменена")
+            try:
+                await query.edit_message_text(f"✅ Ваша запись #{appointment_id} отменена")
+            except BadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    logger.debug("Message not modified in cancel_appointment - ignoring")
+                else:
+                    raise
             await notify_admin_about_cancellation(context, appointment, user_id, is_admin=False)
         else:
             await query.answer("Запись не найдена или у вас нет прав для её отмены", show_alert=True)
@@ -2123,8 +2327,9 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
     """Уведомляет клиента об отмене записи"""
     user_id, user_name, phone, service, date, time = appointment
     
-    # Не отправляем уведомление, если это была ручная запись администратора
-    if user_name == "Администратор":
+    # Добавить проверки на невалидные user_id
+    if user_id == 0 or user_id is None or user_name == "Администратор":
+        logger.info(f"Пропуск уведомления для ручной записи администратора: user_id={user_id}")
         return
         
     # ИСПРАВЛЕНО: правильное отображение дня недели
@@ -2148,6 +2353,11 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
             parse_mode='Markdown'
         )
         logger.info(f"Уведомление об отмене отправлено клиенту {user_id}")
+    except BadRequest as e:
+        if "chat not found" in str(e).lower():
+            logger.warning(f"Chat not found for user {user_id}, skipping notification")
+        else:
+            logger.error(f"BadRequest при отправке уведомления клиенту {user_id}: {e}")
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления клиенту {user_id}: {e}")
 
@@ -2188,6 +2398,11 @@ async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, ap
                 parse_mode='Markdown'
             )
             logger.info(f"Уведомление об отмене отправлено администратору в чат {chat_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for admin chat {chat_id}, skipping notification")
+            else:
+                logger.error(f"BadRequest при отправке уведомления об отмене в чат {chat_id}: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления об отмене в чат {chat_id}: {e}")
 
@@ -2219,6 +2434,11 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
                 parse_mode='Markdown'
             )
             logger.info(f"Уведомление о новой записи отправлено в чат {chat_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for admin chat {chat_id}, skipping notification")
+            else:
+                logger.error(f"BadRequest при отправке уведомления в чат {chat_id}: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления в чат {chat_id}: {e}")
 
@@ -2263,6 +2483,11 @@ async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
                 parse_mode='Markdown'
             )
             logger.info(f"Уведомление отправлено администратору в чат {chat_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for admin chat {chat_id}, skipping notification")
+            else:
+                logger.error(f"BadRequest при отправке уведомления администратору в чат {chat_id}: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления администратору в чат {chat_id}: {e}")
 
@@ -2337,6 +2562,11 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
             db.mark_reminder_sent(appt_id)
             logger.info(f"Напоминание отправлено пользователю {user_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for user {user_id}, skipping reminder")
+            else:
+                logger.error(f"BadRequest при отправке напоминания пользователю {user_id}: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
 
@@ -2371,6 +2601,11 @@ async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
             logger.info(f"Ежедневное расписание отправлено в чат {chat_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for admin chat {chat_id}, skipping daily schedule")
+            else:
+                logger.error(f"BadRequest при отправке расписания в чат {chat_id}: {e}")
         except Exception as e:
             logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
 
@@ -2425,6 +2660,9 @@ def main():
         try:
             logger.info("🤖 Initializing bot application...")
             application = Application.builder().token(config.BOT_TOKEN).build()
+            
+            # ДОБАВИТЬ ОБРАБОТЧИК ОШИБОК
+            application.add_error_handler(error_handler)
             
             # Создаем ConversationHandler для процесса записи с вводом телефона
             conv_handler = ConversationHandler(
