@@ -275,7 +275,9 @@ class Database:
         booked_times = [row[0] for row in cursor.fetchall()]
         
         # Получаем график работы
-        weekday = datetime.strptime(date, "%Y-%m-%d").weekday()
+        # ИСПРАВЛЕНО: правильное определение дня недели
+        date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = date_obj.weekday()
         cursor.execute('''
             SELECT start_time, end_time, is_working FROM work_schedule 
             WHERE weekday = %s
@@ -383,7 +385,7 @@ class Database:
     def mark_reminder_sent(self, appointment_id):
         """Отмечает напоминание как отправленное"""
         cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor.execute(''>
             UPDATE appointments 
             SET reminder_sent = TRUE 
             WHERE id = %s
@@ -583,7 +585,7 @@ class Database:
     def get_all_admins(self):
         """Получает список всех администраторов"""
         cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor.execute(''>
             SELECT admin_id, username, first_name, last_name, added_at, added_by
             FROM bot_admins 
             ORDER BY added_at

@@ -14,6 +14,7 @@ WORKING_HOURS = list(range(10, 20))
 REMINDER_HOURS_BEFORE = 24
 NOTIFICATION_CHAT_ID = None
 
+# ИСПРАВЛЕННЫЕ ДНИ НЕДЕЛИ - теперь корректно определяются
 WEEKDAYS = {
     0: "Понедельник",
     1: "Вторник", 

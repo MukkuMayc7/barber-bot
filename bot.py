@@ -128,11 +128,11 @@ def get_main_keyboard(user_id):
             [KeyboardButton("👥 Управление администраторами")]
         ]
     else:
-        # Клавиатура для обычного пользователя
+        # Клавиатура для обычного пользователя - ДОБАВЛЕНА КНОПКА ГРАФИКА РАБОТЫ
         keyboard = [
             [KeyboardButton("📅 Записаться на стрижку")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
-            [KeyboardButton("ℹ️ О парикмахерской")]
+            [KeyboardButton("🗓️ График работы"), KeyboardButton("ℹ️ О парикмахерской")]
         ]
     
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
@@ -174,6 +174,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📅 *Записаться на стрижку* - выбрать услугу и время\n"
             "📋 *Мои записи* - посмотреть ваши записи\n"
             "❌ *Отменить запись* - отменить вашу запись\n"
+            "🗓️ *График работы* - посмотреть расписание работы\n"
             "ℹ️ *О парикмахерской* - информация о нас"
         )
     
@@ -227,6 +228,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_my_appointments(update, context)
         elif text == "❌ Отменить запись":
             await show_cancel_appointment(update, context)
+        elif text == "🗓️ График работы":  # НОВАЯ КНОПКА ДЛЯ ПОЛЬЗОВАТЕЛЯ
+            await show_work_schedule(update, context)
         elif text == "ℹ️ О парикмахерской":
             await about_barbershop(update, context)
         elif text == "🔙 Главное меню":
@@ -253,6 +256,37 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🏠 *Главное меню {config.BARBERSHOP_NAME}*\n\nВыберите действие на клавиатуре ниже:",
             reply_markup=get_main_keyboard(user_id),
+            parse_mode='Markdown'
+        )
+
+# НОВАЯ ФУНКЦИЯ - ПОКАЗ ГРАФИКА РАБОТЫ ДЛЯ ПОЛЬЗОВАТЕЛЯ
+async def show_work_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает график работы для обычного пользователя"""
+    schedule = db.get_week_schedule()
+    
+    text = f"🗓️ *График работы {config.BARBERSHOP_NAME}*\n\n"
+    
+    for weekday in range(7):
+        day_data = schedule[weekday]
+        day_name = config.WEEKDAYS[weekday]
+        if day_data[4]:  # is_working
+            text += f"✅ {day_name}: {day_data[2]} - {day_data[3]}\n"  # start_time и end_time
+        else:
+            text += f"❌ {day_name}: выходной\n"
+    
+    text += "\n📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
+    text += "📞 *Телефон:* +79178766645"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=get_main_keyboard(update.effective_user.id),
             parse_mode='Markdown'
         )
 
@@ -356,16 +390,18 @@ async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date = today + timedelta(days=i)
         date_str = date.strftime("%Y-%m-%d")
         display_date = date.strftime("%d.%m.%Y")
-        weekday = config.WEEKDAYS[date.weekday()]
+        # ИСПРАВЛЕНО: правильное определение дня недели
+        weekday = date.weekday()
+        day_name = config.WEEKDAYS[weekday]
         
-        schedule = db.get_work_schedule(date.weekday())
+        schedule = db.get_work_schedule(weekday)
         if schedule and schedule[0][4]:  # Если рабочий день (is_working)
             start_time, end_time = schedule[0][2], schedule[0][3]  # start_time и end_time
             
             # Проверяем, можно ли записаться на этот день
             if is_date_available(date, current_time, start_time, end_time, i):
                 keyboard.append([InlineKeyboardButton(
-                    f"{weekday} {display_date}", 
+                    f"{day_name} {display_date}", 
                     callback_data=f"date_{date_str}"
                 )])
                 days_shown += 1
@@ -442,6 +478,7 @@ async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if selected_date == today:
         # Получаем график работы на сегодня
+        # ИСПРАВЛЕНО: правильное определение дня недели
         weekday = selected_date.weekday()
         schedule = db.get_work_schedule(weekday)
         if schedule and schedule[0][4]:  # is_working
@@ -465,13 +502,17 @@ async def date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+    # ИСПРАВЛЕНО: правильное отображение дня недели
+    selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+    weekday = selected_date_obj.weekday()
+    day_name = config.WEEKDAYS[weekday]
+    display_date = selected_date_obj.strftime("%d.%m.%Y")
     
     is_admin_manual = context.user_data.get('is_admin_manual', False)
     if is_admin_manual:
-        text = f"📝 *Запись клиента вручную*\n\n💇 Услуга: *{context.user_data['service']}*\n\n📅 Дата: *{display_date}*\n\n⏰ Выберите время:"
+        text = f"📝 *Запись клиента вручную*\n\n💇 Услуга: *{context.user_data['service']}*\n\n📅 Дата: *{day_name} {display_date}*\n\n⏰ Выберите время:"
     else:
-        text = f"📅 Дата: *{display_date}*\n\n⏰ Выберите время:"
+        text = f"📅 Дата: *{day_name} {display_date}*\n\n⏰ Выберите время:"
     
     await query.edit_message_text(
         text,
@@ -547,6 +588,7 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if selected_date == today:
         # Получаем график работы на сегодня
+        # ИСПРАВЛЕНО: правильное определение дня недели
         weekday = selected_date.weekday()
         schedule = db.get_work_schedule(weekday)
         if schedule and schedule[0][4]:  # is_working
@@ -563,13 +605,17 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+    # ИСПРАВЛЕНО: правильное отображение дня недели
+    selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+    weekday = selected_date_obj.weekday()
+    day_name = config.WEEKDAYS[weekday]
+    display_date = selected_date_obj.strftime("%d.%m.%Y")
     
     is_admin_manual = context.user_data.get('is_admin_manual', False)
     if is_admin_manual:
-        text = f"📝 *Запись клиента вручную*\n\n💇 Услуга: *{context.user_data['service']}*\n\n📅 Дата: *{display_date}*\n\n⏰ Выберите время:"
+        text = f"📝 *Запись клиента вручную*\n\n💇 Услуга: *{context.user_data['service']}*\n\n📅 Дата: *{day_name} {display_date}*\n\n⏰ Выберите время:"
     else:
-        text = f"📅 Дата: *{display_date}*\n\n⏰ Выберите время:"
+        text = f"📅 Дата: *{day_name} {display_date}*\n\n⏰ Выберите время:"
     
     await update.message.reply_text(
         text,
@@ -640,7 +686,11 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             time=user_data['time']
         )
         
-        display_date = datetime.strptime(user_data['date'], "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(user_data['date'], "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         
         # Отправляем уведомление администраторам
         await send_new_appointment_notification(
@@ -649,7 +699,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_username="admin_manual" if is_admin_manual else user.username,
             phone=normalized_phone,
             service=user_data['service'],
-            date=display_date,
+            date=f"{day_name} {display_date}",
             time=user_data['time'],
             appointment_id=appointment_id,
             is_manual=is_admin_manual
@@ -665,7 +715,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_text = (
                 f"✅ *Клиент успешно записан в {config.BARBERSHOP_NAME}!*\n\n"
                 f"💇 Услуга: {user_data['service']}\n"
-                f"📅 Дата: {display_date}\n"
+                f"📅 Дата: {day_name} {display_date}\n"
                 f"⏰ Время: {user_data['time']}\n"
                 f"📞 Телефон: {normalized_phone}\n\n"
                 f"Запись внесена вручную администратором"
@@ -674,7 +724,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_text = (
                 f"✅ *Запись в {config.BARBERSHOP_NAME} успешно создана!*\n\n"
                 f"💇 Услуга: {user_data['service']}\n"
-                f"📅 Дата: {display_date}\n"
+                f"📅 Дата: {day_name} {display_date}\n"
                 f"⏰ Время: {user_data['time']}\n"
                 f"📞 Телефон: {normalized_phone}\n\n"
                 f"Ждём вас в парикмахерской! 🏃‍♂️"
@@ -739,10 +789,14 @@ async def show_admin_manual_appointments(update: Update, context: ContextTypes.D
     
     for appt in manual_appointments:
         appt_id, user_name, username, phone, service, date, time = appt
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         text += f"🆔 #{appt_id}\n"
         text += f"💇 {service}\n"
-        text += f"📅 {display_date} ⏰ {time}\n"
+        text += f"📅 {day_name} {display_date} ⏰ {time}\n"
         text += f"📞 {phone}\n"
         text += "─" * 20 + "\n"
         keyboard.append([InlineKeyboardButton(
@@ -788,10 +842,14 @@ async def show_my_appointments(update: Update, context: ContextTypes.DEFAULT_TYP
     
     for appt in appointments:
         appt_id, service, date, time = appt
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         text += f"🆔 #{appt_id}\n"
         text += f"💇 {service}\n"
-        text += f"📅 {display_date} ⏰ {time}\n"
+        text += f"📅 {day_name} {display_date} ⏰ {time}\n"
         text += "─" * 20 + "\n"
         keyboard.append([InlineKeyboardButton(
             f"❌ Отменить #{appt_id}", 
@@ -846,13 +904,17 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
         else:
             appt_id, service, date, time = appt
             
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         
         if db.is_admin(user_id):
-            button_text = f"❌ #{appt_id} - {display_date} {time}"
+            button_text = f"❌ #{appt_id} - {day_name} {display_date} {time}"
             callback_data = f"cancel_admin_{appt_id}"
         else:
-            button_text = f"❌ #{appt_id} - {display_date} {time}"
+            button_text = f"❌ #{appt_id} - {day_name} {display_date} {time}"
             callback_data = f"cancel_{appt_id}"
             
         keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
@@ -893,14 +955,18 @@ async def show_all_appointments(update: Update, context: ContextTypes.DEFAULT_TY
     
     for appt in appointments:
         appt_id, user_name, username, phone, service, date, time = appt
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         username_display = f"(@{username})" if username and username != "admin_manual" else ""
         manual_indicator = " 📝" if user_name == "Администратор" else ""
         text += f"🆔 #{appt_id}\n"
         text += f"👤 {user_name}{manual_indicator} {username_display}\n"
         text += f"📞 {phone}\n"
         text += f"💇 {service}\n"
-        text += f"📅 {display_date} ⏰ {time}\n"
+        text += f"📅 {day_name} {display_date} ⏰ {time}\n"
         text += "─" * 20 + "\n"
         keyboard.append([InlineKeyboardButton(
             f"❌ Отменить #{appt_id}", 
@@ -967,7 +1033,6 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     schedule = db.get_week_schedule()
     
-    # ИСПРАВЛЕНО: убрано название парикмахерской
     text = "🗓️ *График работы*\n\n"
     
     for weekday in range(7):
@@ -1310,8 +1375,12 @@ async def show_schedule_conflict_warning(update: Update, context: ContextTypes.D
     text += f"👥 *Количество записей:* {len(conflicting_appointments)}\n\n"
     
     for date, appointments in appointments_by_date.items():
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
-        text += f"*{display_date}:*\n"
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        date_day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
+        text += f"*{date_day_name} {display_date}:*\n"
         for time, user_name, service, appt_id in appointments:
             text += f"• {time} - {user_name} ({service}) #{appt_id}\n"
         text += "\n"
@@ -1405,24 +1474,28 @@ async def notify_clients_about_schedule_change(context: ContextTypes.DEFAULT_TYP
     """Уведомляет клиентов об отмене записей из-за изменения графика"""
     day_name = config.WEEKDAYS[new_schedule['weekday']]
     
+    # ОБНОВЛЕНО: более компактное уведомление без "Детали"
     if new_schedule['is_working']:
-        reason = f"изменения графика работы на {day_name} ({new_schedule['start_time']} - {new_schedule['end_time']})"
+        reason = f"изменение графика работы ({new_schedule['start_time']} - {new_schedule['end_time']})"
     else:
-        reason = f"того, что {day_name} стал выходным днем"
+        reason = "выходной день"
     
     for appointment in canceled_appointments:
         user_id, user_name, phone, service, date, time = appointment
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        date_day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         
+        # ОБНОВЛЕНО: компактное уведомление
         text = (
-            f"❌ *Ваша запись в {config.BARBERSHOP_NAME} отменена*\n\n"
-            f"💇 Услуга: {service}\n"
-            f"📅 Дата: {display_date}\n"
-            f"⏰ Время: {time}\n\n"
-            f"*Причина:* изменение графика работы\n"
-            f"*Детали:* {reason}\n\n"
-            f"Пожалуйста, запишитесь на другое удобное время.\n"
-            f"Приносим извинения за неудобства!"
+            f"❌ *Запись отменена*\n\n"
+            f"💇 {service}\n"
+            f"📅 {date_day_name} {display_date}\n"
+            f"⏰ {time}\n\n"
+            f"*Причина:* {reason}\n\n"
+            f"Запишитесь на другое время."
         )
         
         try:
@@ -1630,12 +1703,16 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
     if user_name == "Администратор":
         return
         
-    display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+    # ИСПРАВЛЕНО: правильное отображение дня недели
+    selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+    weekday = selected_date_obj.weekday()
+    day_name = config.WEEKDAYS[weekday]
+    display_date = selected_date_obj.strftime("%d.%m.%Y")
     
     text = (
         f"❌ *Ваша запись в {config.BARBERSHOP_NAME} отменена администратором*\n\n"
         f"💇 Услуга: {service}\n"
-        f"📅 Дата: {display_date}\n"
+        f"📅 Дата: {day_name} {display_date}\n"
         f"⏰ Время: {time}\n\n"
         "Приносим извинения за неудобства. Пожалуйста, запишитесь на другое время."
     )
@@ -1653,26 +1730,28 @@ async def notify_client_about_cancellation(context: ContextTypes.DEFAULT_TYPE, a
 async def notify_admin_about_cancellation(context: ContextTypes.DEFAULT_TYPE, appointment, cancelled_by_user_id, is_admin=False):
     """Уведомляет администраторов об отмене записи"""
     user_id, user_name, phone, service, date, time = appointment
-    display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+    # ИСПРАВЛЕНО: правильное отображение дня недели
+    selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+    weekday = selected_date_obj.weekday()
+    day_name = config.WEEKDAYS[weekday]
+    display_date = selected_date_obj.strftime("%d.%m.%Y")
     
     if is_admin:
-        # ИСПРАВЛЕНО: убран ID клиента
         text = (
             f"❌ *Администратор отменил запись в {config.BARBERSHOP_NAME}*\n\n"
             f"👤 Клиент: {user_name}\n"
             f"📞 Телефон: {phone}\n"
             f"💇 Услуга: {service}\n"
-            f"📅 Дата: {display_date}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
             f"⏰ Время: {time}"
         )
     else:
-        # ИСПРАВЛЕНО: убран ID клиента
         text = (
             f"❌ *Клиент отменил запись в {config.BARBERSHOP_NAME}*\n\n"
             f"👤 Клиент: {user_name}\n"
             f"📞 Телефон: {phone}\n"
             f"💇 Услуга: {service}\n"
-            f"📅 Дата: {display_date}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
             f"⏰ Время: {time}"
         )
     
@@ -1698,7 +1777,6 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
     
     manual_indicator = " 📝 (ручная запись)" if is_manual else ""
     
-    # ИСПРАВЛЕННЫЙ ТЕКСТ УВЕДОМЛЕНИЯ
     text = (
         f"🆕 *Новая запись!*{manual_indicator}\n\n"
         f"👤 *Клиент:* {user_name}\n"
@@ -1728,11 +1806,15 @@ async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
         for date, time, count in duplicates:
             appointments = db.get_appointments_by_datetime(date, time)
             
-            display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+            # ИСПРАВЛЕНО: правильное отображение дня недели
+            selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+            weekday = selected_date_obj.weekday()
+            day_name = config.WEEKDAYS[weekday]
+            display_date = selected_date_obj.strftime("%d.%m.%Y")
             
             text = (
                 f"⚠️ *ВНИМАНИЕ: Обнаружены дублирующиеся записи!*\n\n"
-                f"📅 Дата: {display_date}\n"
+                f"📅 Дата: {day_name} {display_date}\n"
                 f"⏰ Время: {time}\n"
                 f"👥 Количество записей: {count}\n\n"
                 f"*Список клиентов:*\n"
@@ -1813,12 +1895,16 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
         if user_name == "Администратор":
             continue
             
-        display_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
         
         text = (
             f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
             f"💇 Услуга: {service}\n"
-            f"📅 Дата: {display_date}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
             f"⏰ Время: {time}\n\n"
             "Ждём вас в парикмахерской! 🏃‍♂️"
         )
