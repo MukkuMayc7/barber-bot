@@ -507,29 +507,52 @@ class Database:
         """Находит конфликтующие записи при изменении графика"""
         cursor = self.conn.cursor()
         
-        if not new_is_working:
-            # Если день стал выходным - находим все будущие записи на этот день недели
-            cursor.execute('''
-                SELECT a.id, a.user_id, a.user_name, a.phone, a.service, a.appointment_date, a.appointment_time
-                FROM appointments a
-                WHERE EXTRACT(DOW FROM TO_DATE(a.appointment_date, 'YYYY-MM-DD')) = %s
-                AND TO_DATE(a.appointment_date, 'YYYY-MM-DD') >= CURRENT_DATE
-                ORDER BY a.appointment_date, a.appointment_time
-            ''', (weekday,))
-        else:
-            # Если изменилось время - находим записи вне нового графика
-            cursor.execute('''
-                SELECT a.id, a.user_id, a.user_name, a.phone, a.service, a.appointment_date, a.appointment_time
-                FROM appointments a
-                WHERE EXTRACT(DOW FROM TO_DATE(a.appointment_date, 'YYYY-MM-DD')) = %s
-                AND TO_DATE(a.appointment_date, 'YYYY-MM-DD') >= CURRENT_DATE
-                AND (
-                    a.appointment_time < %s OR a.appointment_time >= %s
-                )
-                ORDER BY a.appointment_date, a.appointment_time
-            ''', (weekday, new_start_time, new_end_time))
+        # Получаем все будущие записи
+        cursor.execute('''
+            SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time
+            FROM appointments 
+            WHERE TO_DATE(appointment_date, 'YYYY-MM-DD') >= CURRENT_DATE
+            ORDER BY appointment_date, appointment_time
+        ''')
         
-        return cursor.fetchall()
+        all_future_appointments = cursor.fetchall()
+        
+        # Фильтруем в Python, чтобы избежать проблем с DOW в PostgreSQL
+        conflicting_appointments = []
+        
+        for appointment in all_future_appointments:
+            appt_id, user_id, user_name, phone, service, date, time = appointment
+            
+            # Определяем день недели записи в Python
+            try:
+                appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+                appointment_weekday = appointment_date.weekday()  # Python weekday: понедельник=0, воскресенье=6
+            except ValueError:
+                logger.error(f"Неверный формат даты в записи {appt_id}: {date}")
+                continue
+            
+            # Проверяем, относится ли запись к изменяемому дню недели
+            if appointment_weekday == weekday:
+                if not new_is_working:
+                    # Если день становится выходным - все записи на этот день конфликтующие
+                    conflicting_appointments.append(appointment)
+                    logger.info(f"Найдена конфликтующая запись (выходной): {date} {time} - {user_name}")
+                else:
+                    # Если изменяется время - проверяем попадает ли время записи в новый график
+                    try:
+                        appointment_time = datetime.strptime(time, "%H:%M").time()
+                        new_start = datetime.strptime(new_start_time, "%H:%M").time()
+                        new_end = datetime.strptime(new_end_time, "%H:%M").time()
+                        
+                        # Запись конфликтует, если она вне нового графика
+                        if appointment_time < new_start or appointment_time >= new_end:
+                            conflicting_appointments.append(appointment)
+                            logger.info(f"Найдена конфликтующая запись (время): {date} {time} - {user_name}")
+                    except ValueError:
+                        logger.error(f"Неверный формат времени в записи {appt_id}: {time}")
+        
+        logger.info(f"Всего найдено конфликтующих записей для дня {weekday}: {len(conflicting_appointments)}")
+        return conflicting_appointments
 
     def cancel_appointments_by_ids(self, appointment_ids):
         """Массово отменяет записи по списку ID"""
@@ -548,8 +571,10 @@ class Database:
                 cursor.execute('DELETE FROM schedule WHERE date = %s AND time = %s', 
                               (appointment[4], appointment[5]))
                 canceled_appointments.append(appointment)
+                logger.info(f"Отменена запись #{appt_id} для {appointment[1]}")
         
         self.conn.commit()
+        logger.info(f"Всего отменено записей: {len(canceled_appointments)}")
         return canceled_appointments
 
     # НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
