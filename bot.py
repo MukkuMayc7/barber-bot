@@ -13,7 +13,7 @@ from telegram.ext import (
     MessageHandler, filters, ContextTypes, ConversationHandler,
     JobQueue
 )
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, TelegramError, Conflict
 from datetime import datetime, timedelta, timezone
 import database
 import config
@@ -209,6 +209,15 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         elif "message to edit not found" in str(error).lower():
             logger.warning(f"Message to edit not found: {error}")
+            return
+    
+    # ДОБАВЛЯЕМ ОБРАБОТКУ CONFLICT ОШИБОК
+    if isinstance(error, Conflict):
+        logger.error(f"❌ CONFLICT: Another bot instance is running. Make sure only one instance is active.")
+        # Не останавливаем приложение, просто логируем и игнорируем
+        return
+    
+    logger.error(f"Exception while handling an update: {error}", exc_info=error)
             return
     
     logger.error(f"Exception while handling an update: {error}", exc_info=error)
