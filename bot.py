@@ -158,58 +158,6 @@ def monitor():
         "service": "barbershop-bot"
     }
 
-
-# Обновите главную страницу чтобы показать все эндпоинты
-@web_app.route('/')
-def home():
-    """Главная страница веб-сервера"""
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Бот Парикмахерской</title>
-        <meta charset="utf-8">
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; text-align: center; }}
-            .status {{ color: green; font-weight: bold; }}
-            .container {{ max-width: 800px; margin: 0 auto; padding: 20px; }}
-            .endpoints {{ text-align: left; margin: 20px 0; }}
-            .endpoint {{ margin: 5px 0; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🤖 Бот Парикмахерской "Бархат"</h1>
-            <p>Статус: <span class="status">Активен ✅</span></p>
-            <p>Время сервера: {current_time}</p>
-            
-            div class="endpoints">
-                <h3>📡 Доступные эндпоинты:</h3>
-                <div class="endpoint"><a href="/health">/health</a> - Проверка здоровья</div>
-                <div class="endpoint"><a href="/deep-health">/deep-health</a> - Глубокая проверка</div>
-                <div class="endpoint"><a href="/ping">/ping</a> - Ping</div>
-                <div class="endpoint"><a href="/status">/status</a> - Статус</div>
-                <div class="endpoint"><a href="/keep-alive">/keep-alive</a> - Поддержание активности</div>
-                <div class="endpoint"><a href="/active">/active</a> - Активность</div>
-                <div class="endpoint"><a href="/alive">/alive</a> - Живость</div>
-                <div class="endpoint"><a href="/ready">/ready</a> - Готовность</div>
-                <div class="endpoint"><a href="/check">/check</a> - Проверка</div>
-                <div class="endpoint"><a href="/monitor">/monitor</a> - Мониторинг</div>
-            </div>
-
-            <div style="margin-top: 30px; padding: 20px; background: #f5f5f5; border-radius: 10px;">
-                <h3>📊 Статистика сервиса</h3>
-                <p>• Бот работает в режиме 24/7</p>
-                <p>• Автоматические напоминания клиентам</p>
-                <p>• Визуальное расписание для администраторов</p>
-                <p>• Система управления записями</p>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-
 def run_web_server():
     """Запускает веб-сервер в отдельном потоке"""
     port = int(os.getenv('PORT', 5000))
