@@ -381,18 +381,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обработка для администратора
         if text == "📝 Записать клиента вручную":
             await make_appointment_start(update, context, is_admin=True)
-        elif text == "📋 Мои записи":
-            await show_admin_manual_appointments(update, context)
-        elif text == "❌ Отменить запись":
-            await show_cancel_appointment(update, context)
         elif text == "👑 Все записи":
             await show_all_appointments(update, context)
+        elif text == "📋 Мои записи":
+            await show_admin_manual_appointments(update, context)
         elif text == "📊 Записи сегодня":
             await show_today_appointments_visual(update, context)
-        elif text == "📅 Записи на неделю":  # ДОБАВЛЕННЫЙ ОБРАБОТЧИК
+        elif text == "📅 Записи на неделю":
             await show_week_appointments(update, context)
         elif text == "📈 Статистика":
             await show_statistics(update, context)
+        elif text == "❌ Отменить запись":
+            await show_cancel_appointment(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
         elif text == "👥 Управление администраторами":
