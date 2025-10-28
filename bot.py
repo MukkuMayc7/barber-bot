@@ -1248,6 +1248,7 @@ async def show_today_appointments(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 # НОВАЯ ФУНКЦИЯ - ВИЗУАЛИЗАЦИЯ РАСПИСАНИЯ НА СЕГОДНЯ
+
 async def show_today_appointments_visual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает расписание на сегодня в новом визуальном формате"""
     try:
@@ -1322,22 +1323,22 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
         
         schedule_text = ""
         total_booked = 0
-        
+
         for slot in all_slots:
             if slot in booked_slots:
                 client_info = booked_slots[slot]
-                schedule_text += f"{slot} ─── 👤 {client_info['name']} {client_info['phone']} "
-                
-                # Добавляем кнопки действий для администратора
-                schedule_text += "[📞][✏️][❌]\n"
+                schedule_text += f"⏰ {slot} ─── 👤 {client_info['name']} {client_info['phone']}\n"
                 total_booked += 1
             else:
-                schedule_text += f"{slot} ─── ✅ Свободно [➕]\n"
+                schedule_text += f"⏰ {slot} ─── ✅ Свободно\n"
+
+        # Добавляем инструкцию по управлению
+        schedule_text += f"\n💡 *Быстрые действия:*\n"
+        schedule_text += f"• Нажмите '🔄 Обновить' для актуального расписания\n"
+        schedule_text += f"• Нажмите '📞 Все контакты' для просмотра всех номеров\n"
+        schedule_text += f"• Для отмены записи используйте кнопку '❌ Отменить запись' в главном меню"
         
-        # Добавляем статистику
-        stats_text = f"\n📊 Статус: {total_booked} записей | {len(all_slots) - total_booked} свободно"
-        
-        full_text = header + schedule_text + stats_text
+        full_text = header + schedule_text
         
         # Создаем клавиатуру с быстрыми действиями
         keyboard = [
@@ -1351,7 +1352,7 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
         if update.callback_query:
             query = update.callback_query
             try:
-                await query.edit_message_text(full_text, reply_markup=reply_markup)
+                await query.edit_message_text(full_text, parse_mode='Markdown', reply_markup=reply_markup)
             except BadRequest as e:
                 if "message is not modified" in str(e).lower():
                     # Игнорируем эту ошибку - сообщение уже актуально
@@ -1359,7 +1360,7 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
                 else:
                     raise
         else:
-            await update.message.reply_text(full_text, reply_markup=reply_markup)
+            await update.message.reply_text(full_text, parse_mode='Markdown', reply_markup=reply_markup)
             
     except Exception as e:
         logger.error(f"Ошибка в show_today_appointments_visual: {e}")
@@ -2350,7 +2351,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (ValueError, IndexError):
                 await query.edit_message_text("❌ Ошибка: неверный ID записи")
     elif query.data.startswith("schedule_day_"):
-        await schedule_day_selected(update, context)
+    	await schedule_day_selected(update, context)
+    # ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НЕДЕЛЬНОГО ОТЧЕТА
+    elif query.data == "weekly_report":
+    	await weekly_report(update, context)
     elif query.data.startswith("schedule_working_"):
         await schedule_working_selected(update, context)
     elif query.data.startswith("schedule_off_"):
