@@ -2838,6 +2838,7 @@ def main():
             global db
             db = database.Database()
             
+            # ИСПРАВЛЕНИЕ: Создаем application с правильной настройкой event loop
             application = Application.builder().token(config.BOT_TOKEN).build()
             
             # Добавляем обработчик ошибок
@@ -2877,12 +2878,13 @@ def main():
             # Запускаем бота в режиме polling с УВЕЛИЧЕННЫМИ ИНТЕРВАЛАМИ
             logger.info("🤖 Bot starting in polling mode with optimized intervals...")
             
-            # УВЕЛИЧЕННЫЕ ИНТЕРВАЛЫ ДЛЯ СНИЖЕНИЯ КОНФЛИКТОВ
+            # ИСПРАВЛЕНИЕ: Запускаем с правильной обработкой event loop
             application.run_polling(
-                poll_interval=5.0,  # Увеличили с 3.0 до 5.0
-                timeout=25,         # Увеличили таймаут
+                poll_interval=5.0,
+                timeout=25,
                 drop_pending_updates=True,
-                allowed_updates=['message', 'callback_query']
+                allowed_updates=['message', 'callback_query'],
+                close_loop=False  # Важно: не закрывать event loop
             )
             
             logger.info("🤖 Bot stopped - restarting...")
@@ -2900,4 +2902,5 @@ def main():
             gc.collect()
 
 if __name__ == "__main__":
+    # ИСПРАВЛЕНИЕ: Запускаем главную функцию напрямую
     main()
