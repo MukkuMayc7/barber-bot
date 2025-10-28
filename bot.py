@@ -515,7 +515,7 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Примечание:* пользователь считается активным, если использовал бота в течение последних 30 дней"
     )
     
-    # ДОБАВЛЯЕМ КНОПКУ ОТЧЕТА ЗА НЕДЕЛЮ
+        # КНОПКА ОТЧЕТА ЗА НЕДЕЛЮ С ПРАВИЛЬНЫМ CALLBACK_DATA
     keyboard = [
         [InlineKeyboardButton("📊 Отчет за неделю", callback_data="weekly_report")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
@@ -558,6 +558,8 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📞 *Постоянные клиенты:* {stats['regular_clients']}"
         )
         
+        # ИСПРАВЛЕННАЯ КЛАВИАТУРА - кнопка "Назад" теперь ведет на show_statistics
+
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="show_statistics")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -2413,8 +2415,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await called_confirmation(update, context)
     elif query.data == "confirm_cancel_slot":
         await confirm_cancel_slot(update, context)
+
+        # ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НЕДЕЛЬНОГО ОТЧЕТА И ВОЗВРАТА К СТАТИСТИКЕ
+
     elif query.data == "weekly_report":
         await weekly_report(update, context)
+    elif query.data == "show_statistics":  # ДОБАВЛЕННЫЙ ОБРАБОТЧИК
+        await show_statistics(update, context)
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
