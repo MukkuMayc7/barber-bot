@@ -2119,10 +2119,14 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     for admin in admins:
         admin_id, username, first_name, last_name, added_at, added_by = admin
         
-        # ✅ ПРОПУСКАЕМ защищенных администраторов
-        if admin_id in config.PROTECTED_ADMINS:
-            protected_count += 1
-            continue
+        # ✅ ПРОВЕРКА с обработкой случая, когда PROTECTED_ADMINS не определен
+        try:
+            if hasattr(config, 'PROTECTED_ADMINS') and admin_id in config.PROTECTED_ADMINS:
+                protected_count += 1
+                continue
+        except AttributeError:
+            # Если PROTECTED_ADMINS не определен, пропускаем проверку
+            pass
             
         display_name = f"{first_name} {last_name}".strip()
         if username and username != 'system':
