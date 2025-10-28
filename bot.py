@@ -2702,12 +2702,17 @@ def main():
             restart_count += 1
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
             
-            # ИСПРАВЛЕНИЕ: Запускаем бота в основном потоке с asyncio
-            import asyncio
-            
-            # Создаем новое событийное loop для каждого перезапуска
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # ПЕРЕД созданием application - принудительно сбрасываем webhook
+            try:
+                import requests
+                bot_token = config.BOT_TOKEN
+                # Принудительно удаляем webhook и сбрасываем updates
+                requests.post(f"https://api.telegram.org/bot{bot_token}/deleteWebhook")
+                requests.post(f"https://api.telegram.org/bot{bot_token}/getUpdates", 
+                            json={"offset": -1})  # Сбрасываем offset
+                logger.info("✅ Forced webhook cleanup completed")
+            except Exception as e:
+                logger.warning(f"⚠️ Webhook cleanup failed: {e}")
             
             # Пересоздаем соединение с БД при каждом перезапуске
             global db
