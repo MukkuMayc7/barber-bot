@@ -2362,12 +2362,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (ValueError, IndexError):
                 await query.edit_message_text("❌ Ошибка: неверный ID записи")
     elif query.data.startswith("schedule_day_"):
-    	await schedule_day_selected(update, context)
+        await schedule_day_selected(update, context)
 
     # ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НЕДЕЛЬНОГО ОТЧЕТА
 
     elif query.data == "weekly_report":
-    	await weekly_report(update, context)
+        await weekly_report(update, context)
     elif query.data.startswith("schedule_working_"):
         await schedule_working_selected(update, context)
     elif query.data.startswith("schedule_off_"):
@@ -2940,10 +2940,10 @@ def main():
             )
             
             application.add_handler(CommandHandler("start", start))
-	    application.add_handler(CommandHandler("stop", stop_command))  # ДОБАВЛЯЕМ ЭТУ СТРОЧКУ
-	    application.add_handler(conv_handler)
-	    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-	    application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(CommandHandler("stop", stop_command))  # ДОБАВЛЯЕМ ЭТУ СТРОЧКУ
+        application.add_handler(conv_handler)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        application.add_handler(CallbackQueryHandler(button_handler))
             
             # Обработчик ввода ID администратора
             application.add_handler(MessageHandler(
