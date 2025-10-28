@@ -1,5 +1,4 @@
 # bot.py
-# bot.py
 import logging
 import re
 import os
@@ -161,24 +160,18 @@ def monitor():
     }
 
 def run_web_server():
-    """Запускает веб-сервер в отдельном потоке"""
-    port = int(os.getenv('PORT', 10000))  # Render использует порт 10000
+    """Запускает веб-сервер в основном потоке"""
+    port = int(os.getenv('PORT', 10000))
     logger.info(f"🌐 Starting web server on port {port}")
     
-    # Отключаем логирование Werkzeug для уменьшения шума
+    # Отключаем логирование Werkzeug
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     
-    try:
-        # Пробуем использовать Waitress для production
-        from waitress import serve
-        logger.info("🚀 Using Waitress production server")
-        serve(web_app, host='0.0.0.0', port=port, threads=4)
-    except ImportError:
-        # Fallback на Flask development server
-        logger.info("🚀 Using Flask development server (Waitress not available)")
-        web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # Только Flask development server - Waitress вызывает конфликты
+    logger.info("🚀 Using Flask development server")
+    web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
 
 def start_enhanced_self_ping():
     """Улучшенная система keep-alive для Render"""
