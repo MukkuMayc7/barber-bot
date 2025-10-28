@@ -6,6 +6,9 @@ import threading
 import time
 import signal
 import sys
+import psutil
+import fcntl
+import atexit
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
@@ -2316,6 +2319,17 @@ async def notify_clients_about_schedule_change(context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления клиенту {user_id}: {e}")
 
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для остановки бота (только для администраторов)"""
+    user_id = update.effective_user.id
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет прав для этой команды")
+        return
+    
+    await update.message.reply_text("🛑 Останавливаю бота...")
+    logger.info("🛑 Bot остановлен по команде администратора")
+    os._exit(0)  # Принудительный выход
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline кнопок"""
     query = update.callback_query
@@ -2774,8 +2788,72 @@ def setup_job_queue(application: Application):
     # Периодическая очистка прошедших записей (каждые 30 минут)
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
 
+# ========== ЗАЩИТА ОТ ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ ==========
+
+def kill_duplicate_processes():
+    """Убивает дублирующиеся процессы бота"""
+    current_pid = os.getpid()
+    current_script = os.path.basename(__file__)
+    
+    killed_count = 0
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            # Проверяем Python процессы с тем же скриптом
+            if (proc.info['pid'] != current_pid and 
+                'python' in proc.info['name'].lower() and 
+                proc.info['cmdline'] and 
+                any('bot.py' in cmd for cmd in proc.info['cmdline'] if cmd)):
+                
+                logger.info(f"🔄 Найден дублирующийся процесс PID {proc.info['pid']}, завершаем...")
+                proc.terminate()
+                proc.wait(timeout=5)
+                killed_count += 1
+                logger.info(f"✅ Процесс PID {proc.info['pid']} завершен")
+                
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+            continue
+    
+    if killed_count > 0:
+        logger.info(f"✅ Завершено {killed_count} дублирующихся процессов")
+
+def create_lock_file():
+    """Создает файл блокировки для предотвращения дублирующихся запусков"""
+    lock_file = '/tmp/barbershop_bot.lock'
+    
+    try:
+        # Пытаемся создать и заблокировать файл
+        lock_fd = open(lock_file, 'w')
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        
+        # Функция для очистки при выходе
+        def cleanup_lock():
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+                if os.path.exists(lock_file):
+                    os.unlink(lock_file)
+                logger.info("🔓 Lock file очищен")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка при очистке lock file: {e}")
+        
+        atexit.register(cleanup_lock)
+        logger.info("🔒 Lock file создан - дублирующиеся процессы заблокированы")
+        return True
+        
+    except (IOError, OSError):
+        logger.error("❌ Бот уже запущен! Завершите предыдущий процесс перед запуском нового.")
+        return False
+
 def main():
     """Главная функция с улучшенной обработкой ошибок и защитой от конфликтов"""
+    
+    # ПРОВЕРКА ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ
+    if not create_lock_file():
+        logger.error("❌ Не удалось создать lock file. Бот уже запущен!")
+        sys.exit(1)
+    
+    kill_duplicate_processes()
+    
     logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support and CONFLICT PROTECTION...")
     
     # ПРЕДВАРИТЕЛЬНАЯ ОЧИСТКА WEBHOOK ДЛЯ ПРЕДОТВРАЩЕНИЯ КОНФЛИКТОВ
@@ -2863,9 +2941,10 @@ def main():
             )
             
             application.add_handler(CommandHandler("start", start))
-            application.add_handler(conv_handler)
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-            application.add_handler(CallbackQueryHandler(button_handler))
+	    application.add_handler(CommandHandler("stop", stop_command))  # ДОБАВЛЯЕМ ЭТУ СТРОЧКУ
+	    application.add_handler(conv_handler)
+	    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+	    application.add_handler(CallbackQueryHandler(button_handler))
             
             # Обработчик ввода ID администратора
             application.add_handler(MessageHandler(
