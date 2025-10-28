@@ -1114,7 +1114,7 @@ async def show_cancel_appointment(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             await update.message.reply_text(
-                "📭 У вас нет записей для отменя",
+                "📭 У вас нет записей для отмены",
                 reply_markup=reply_markup
             )
         return
@@ -2650,7 +2650,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_admin = db.is_admin(user_id)
         await make_appointment_start(update, context, is_admin=is_admin)
     
-    # ДОБАВЬТЕ ЭТИ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ АДМИНИСТРАТОРОВ:
     elif query.data == "manage_admins":
         await manage_admins(update, context)
     elif query.data == "admin_list":
