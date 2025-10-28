@@ -712,18 +712,29 @@ class Database:
         logger.info(f"Добавлен администратор {admin_id}")
 
     def remove_admin(self, admin_id):
-        """Удаляет администратора"""
+    """Удаляет администратора, если он не защищен"""
+    try:
+        # Проверяем, не защищен ли администратор
+        if admin_id in config.PROTECTED_ADMINS:
+            logger.warning(f"🚫 Попытка удалить защищенного администратора {admin_id}")
+            return False
+            
         cursor = self.conn.cursor()
-        cursor.execute('DELETE FROM bot_admins WHERE admin_id = %s', (admin_id,))
-        deleted = cursor.rowcount > 0
+        cursor.execute('DELETE FROM admins WHERE user_id = %s', (admin_id,))
         self.conn.commit()
         
+        deleted = cursor.rowcount > 0
         if deleted:
-            logger.info(f"Удален администратор {admin_id}")
+            logger.info(f"✅ Администратор {admin_id} удален из БД")
         else:
-            logger.info(f"Администратор {admin_id} не найден")
-        
+            logger.warning(f"⚠️ Администратор {admin_id} не найден в БД")
+            
         return deleted
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при удалении администратора {admin_id}: {e}")
+        self.conn.rollback()
+        return False
 
     def get_all_admins(self):
         """Получает список всех администраторов"""

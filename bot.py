@@ -2002,16 +2002,22 @@ async def show_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     
+    logger.info(f"🔄 show_admin_list вызван для пользователя {user_id}")
+    
     if not db.is_admin(user_id):
+        logger.warning(f"❌ Пользователь {user_id} не администратор")
         await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
         return
     
     admins = db.get_all_admins()
+    logger.info(f"📊 Найдено администраторов в БД: {len(admins)}")
     
     if not admins:
         text = "📭 Список администраторов пуст"
     else:
         text = "👑 *Список администраторов:*\n\n"
+        protected_count = 0
+        
         for admin in admins:
             admin_id, username, first_name, last_name, added_at, added_by = admin
             display_name = f"{first_name} {last_name}".strip()
@@ -2020,10 +2026,21 @@ async def show_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             added_date = added_at.strftime("%d.%m.%Y") if isinstance(added_at, datetime) else added_at
             
-            text += f"🆔 *ID:* {admin_id}\n"
+            # ✅ ОТМЕТКА защищенных администраторов
+            protection_indicator = " 🔒" if admin_id in config.PROTECTED_ADMINS else ""
+            
+            text += f"🆔 *ID:* {admin_id}{protection_indicator}\n"
             text += f"👤 *Имя:* {display_name}\n"
             text += f"📅 *Добавлен:* {added_date}\n"
             text += "─" * 20 + "\n"
+            
+            if admin_id in config.PROTECTED_ADMINS:
+                protected_count += 1
+        
+        if protected_count > 0:
+            text += f"\n🔒 *{protected_count} защищенный(ых) администратор(ов)*"
+        
+        logger.info(f"📋 Сформирован список из {len(admins)} администраторов")
     
     keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -2034,10 +2051,12 @@ async def show_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
+        logger.info(f"✅ Список администраторов отправлен пользователю {user_id}")
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             logger.debug("Message not modified in show_admin_list - ignoring")
         else:
+            logger.error(f"❌ Ошибка при отправке списка администраторов: {e}")
             raise
 
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2095,8 +2114,16 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     keyboard = []
+    protected_count = 0
+    
     for admin in admins:
         admin_id, username, first_name, last_name, added_at, added_by = admin
+        
+        # ✅ ПРОПУСКАЕМ защищенных администраторов
+        if admin_id in config.PROTECTED_ADMINS:
+            protected_count += 1
+            continue
+            
         display_name = f"{first_name} {last_name}".strip()
         if username and username != 'system':
             display_name += f" (@{username})"
@@ -2107,14 +2134,21 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )])
         logger.info(f"📋 Добавлен администратор в список: {display_name} (ID: {admin_id})")
     
+    if not keyboard:
+        await query.answer("❌ Нет администраторов для удаления", show_alert=True)
+        return
+    
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
+        text = "➖ *Удаление администратора*\n\nВыберите администратора для удаления:"
+        if protected_count > 0:
+            text += f"\n\n*Примечание:* {protected_count} защищенный(ых) администратор(ов) скрыты"
+            
         await query.edit_message_text(
-            "➖ *Удаление администратора*\n\n"
-            "Выберите администратора для удаления:",
+            text,
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
@@ -2177,6 +2211,12 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
         return
     
+    # ✅ ПРОВЕРКА: Нельзя удалить защищенного администратора
+    if admin_id in config.PROTECTED_ADMINS:
+        logger.warning(f"🚫 Попытка удалить защищенного администратора {admin_id}")
+        await query.answer("❌ Нельзя удалить защищенного администратора", show_alert=True)
+        return
+    
     # Нельзя удалить себя
     if admin_id == user_id:
         await query.answer("❌ Нельзя удалить самого себя", show_alert=True)
@@ -2186,6 +2226,7 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
     
     if deleted:
         text = f"✅ Администратор с ID {admin_id} удален"
+        logger.info(f"✅ Администратор {admin_id} удален пользователем {user_id}")
     else:
         text = "❌ Администратор не найден"
     
