@@ -297,15 +297,13 @@ def get_main_keyboard(user_id):
     keyboard = []
     
     if db.is_admin(user_id):
-        # Клавиатура для администратора - ТЕМАТИЧЕСКАЯ ГРУППИРОВКА
+        # Клавиатура для администратора - НОВАЯ ЛОГИЧЕСКАЯ ГРУППИРОВКА
         keyboard = [
             [KeyboardButton("📝 Записать клиента вручную")],
-            # 📊 ЗАПИСИ
-            [KeyboardButton("📊 Записи сегодня"), KeyboardButton("📅 Записи на неделю"), KeyboardButton("👑 Все записи")],
-            # 🛠️ УПРАВЛЕНИЕ
+            [KeyboardButton("🗓️ График работы")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
-            # ⚙️ АДМИНИСТРИРОВАНИЕ
-            [KeyboardButton("🗓️ График работы"), KeyboardButton("👥 Управление администраторами"), KeyboardButton("📈 Статистика")]
+            [KeyboardButton("📊 Записи сегодня"), KeyboardButton("📅 Записи на неделю"), KeyboardButton("👑 Все записи")],
+            [KeyboardButton("📈 Статистика"), KeyboardButton("👥 Управление")]
         ]
     else:
         # Клавиатура для обычного пользователя
