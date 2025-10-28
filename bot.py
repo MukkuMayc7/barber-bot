@@ -2045,11 +2045,15 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     
+    logger.info(f"🔄 add_admin_start вызван пользователем {user_id}")
+    
     if not db.is_admin(user_id):
+        logger.warning(f"❌ Пользователь {user_id} не администратор")
         await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
         return
     
     context.user_data['awaiting_admin_id'] = True
+    logger.info(f"✅ awaiting_admin_id установлен в True для пользователя {user_id}")
     
     try:
         await query.edit_message_text(
@@ -2062,10 +2066,12 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "*Введите числовой ID:*",
             parse_mode='Markdown'
         )
+        logger.info(f"✅ Сообщение для ввода ID отправлено пользователю {user_id}")
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             logger.debug("Message not modified in add_admin_start - ignoring")
         else:
+            logger.error(f"❌ Ошибка при отправке сообщения: {e}")
             raise
 
 async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2073,13 +2079,18 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     user_id = query.from_user.id
     
+    logger.info(f"🔄 remove_admin_start вызван пользователем {user_id}")
+    
     if not db.is_admin(user_id):
+        logger.warning(f"❌ Пользователь {user_id} не администратор")
         await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
         return
     
     admins = db.get_all_admins()
+    logger.info(f"📊 Найдено администраторов: {len(admins)}")
     
     if len(admins) <= 1:
+        logger.warning(f"❌ Попытка удалить последнего администратора")
         await query.answer("❌ Нельзя удалить последнего администратора", show_alert=True)
         return
     
@@ -2094,6 +2105,7 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"➖ {display_name} (ID: {admin_id})",
             callback_data=f"admin_remove_confirm_{admin_id}"
         )])
+        logger.info(f"📋 Добавлен администратор в список: {display_name} (ID: {admin_id})")
     
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")])
     
@@ -2106,10 +2118,12 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
+        logger.info(f"✅ Список администраторов для удаления отправлен пользователю {user_id}")
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             logger.debug("Message not modified in remove_admin_start - ignoring")
         else:
+            logger.error(f"❌ Ошибка при отправке сообщения: {e}")
             raise
 
 async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
@@ -2188,18 +2202,25 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода ID администратора"""
+    user_id = update.effective_user.id
+    logger.info(f"🔄 handle_admin_id_input вызван для пользователя {user_id}")
+    
     if not context.user_data.get('awaiting_admin_id'):
+        logger.info("❌ awaiting_admin_id = False, пропускаем обработку")
         return
     
     context.user_data['awaiting_admin_id'] = False
-    user_id = update.effective_user.id
     text = update.message.text.strip()
+    
+    logger.info(f"📥 Получен ID для добавления администратора: '{text}' от пользователя {user_id}")
     
     try:
         new_admin_id = int(text)
+        logger.info(f"🔢 Преобразован ID: {new_admin_id}")
         
         # Проверяем, не является ли уже администратором
         if db.is_admin(new_admin_id):
+            logger.warning(f"⚠️ Пользователь {new_admin_id} уже администратор")
             await update.message.reply_text(
                 "❌ Этот пользователь уже является администратором",
                 reply_markup=get_main_keyboard(user_id)
@@ -2208,23 +2229,36 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
         
         # Получаем информацию о пользователе
         try:
+            logger.info(f"🔍 Получаем информацию о пользователе {new_admin_id}")
             chat_member = await context.bot.get_chat_member(new_admin_id, new_admin_id)
             username = chat_member.user.username
             first_name = chat_member.user.first_name
             last_name = chat_member.user.last_name or ""
+            logger.info(f"✅ Информация получена: {first_name} {last_name} (@{username})")
         except Exception as e:
             # Если не можем получить информацию, используем значения по умолчанию
+            logger.warning(f"⚠️ Не удалось получить информацию о пользователе {new_admin_id}: {e}")
             username = "unknown"
             first_name = "Пользователь"
             last_name = f"ID {new_admin_id}"
         
         # Добавляем администратора
-        db.add_admin(new_admin_id, username, first_name, last_name, user_id)
+        logger.info(f"➕ Добавляем администратора {new_admin_id} в БД")
+        success = db.add_admin(new_admin_id, username, first_name, last_name, user_id)
+        
+        if not success:
+            logger.error(f"❌ Ошибка при добавлении администратора {new_admin_id} в БД")
+            await update.message.reply_text(
+                "❌ Ошибка при добавлении администратора в базу данных",
+                reply_markup=get_main_keyboard(user_id)
+            )
+            return
         
         display_name = f"{first_name} {last_name}".strip()
         if username and username != 'unknown':
             display_name += f" (@{username})"
         
+        logger.info(f"✅ Администратор {new_admin_id} успешно добавлен")
         await update.message.reply_text(
             f"✅ *Новый администратор добавлен!*\n\n"
             f"👤 *Имя:* {display_name}\n"
@@ -2235,12 +2269,13 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
     except ValueError:
+        logger.error(f"❌ Неверный формат ID: '{text}'")
         await update.message.reply_text(
             "❌ Неверный формат ID. Введите числовой ID пользователя:",
             reply_markup=get_main_keyboard(user_id)
         )
     except Exception as e:
-        logger.error(f"Ошибка при добавлении администратора: {e}")
+        logger.error(f"❌ Ошибка при добавлении администратора: {e}")
         await update.message.reply_text(
             "❌ Ошибка при добавлении администратора. Проверьте правильность ID.",
             reply_markup=get_main_keyboard(user_id)
@@ -2642,6 +2677,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Ошибка при ответе на callback query: {e}")
     
+    logger.info(f"🔄 button_handler: {query.data} от пользователя {query.from_user.id}")
+    
     if query.data == "main_menu":
         await show_main_menu(update, context)
     elif query.data == "make_appointment":
@@ -2662,6 +2699,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("admin_remove_confirm_"):
         try:
             admin_id = int(query.data.split("_")[3])
+            logger.info(f"🔄 admin_remove_confirm для admin_id: {admin_id}")
             await remove_admin_confirm(update, context, admin_id)
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
@@ -2670,6 +2708,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("admin_remove_final_"):
         try:
             admin_id = int(query.data.split("_")[3])
+            logger.info(f"🔄 admin_remove_final для admin_id: {admin_id}")
             await remove_admin_final(update, context, admin_id)
         except (ValueError, IndexError) as e:
             logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
@@ -2750,6 +2789,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await called_confirmation(update, context)
     elif query.data == "confirm_cancel_slot":
         await confirm_cancel_slot(update, context)
+    else:
+        logger.warning(f"⚠️ Неизвестный callback_data: {query.data}")
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
@@ -3181,6 +3222,10 @@ def create_lock_file():
 def main():
     """Главная функция с улучшенной обработкой ошибок и защитой от конфликтов"""
     
+    # Включим подробное логирование для отладки
+    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger('telegram').setLevel(logging.INFO)
+    
     # ПРОВЕРКА ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ
     if not create_lock_file():
         logger.error("❌ Не удалось создать lock file. Бот уже запущен!")
@@ -3219,9 +3264,11 @@ def main():
     # Запускаем веб-сервер в отдельном потоке
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
+    logger.info("🌐 Web server thread started")
     
     # Запускаем улучшенный self-ping сервис
     start_enhanced_self_ping()
+    logger.info("🔁 Enhanced self-ping service started")
     
     # Даем веб-серверу время на запуск
     time.sleep(3)
@@ -3239,22 +3286,31 @@ def main():
                 import requests
                 bot_token = config.BOT_TOKEN
                 # Принудительно удаляем webhook и сбрасываем updates
-                requests.post(f"https://api.telegram.org/bot{bot_token}/deleteWebhook")
+                requests.post(f"https://api.telegram.org/bot{bot_token}/deleteWebhook", timeout=5)
                 requests.post(f"https://api.telegram.org/bot{bot_token}/getUpdates", 
-                            json={"offset": -1})  # Сбрасываем offset
+                            json={"offset": -1}, timeout=5)  # Сбрасываем offset
                 logger.info("✅ Forced webhook cleanup completed")
+                time.sleep(2)
             except Exception as e:
                 logger.warning(f"⚠️ Webhook cleanup failed: {e}")
             
             # Пересоздаем соединение с БД при каждом перезапуске
             global db
-            db = database.Database()
+            try:
+                db = database.Database()
+                logger.info("✅ Database connection reestablished")
+            except Exception as e:
+                logger.error(f"❌ Database connection failed: {e}")
+                time.sleep(10)
+                continue
             
             # ИСПРАВЛЕНИЕ: Создаем application с правильной настройкой event loop
             application = Application.builder().token(config.BOT_TOKEN).build()
+            logger.info("✅ Application created")
             
             # Добавляем обработчик ошибок
             application.add_error_handler(error_handler)
+            logger.info("✅ Error handler added")
             
             # Создаем ConversationHandler для процесса записи с вводом телефона
             conv_handler = ConversationHandler(
@@ -3275,21 +3331,45 @@ def main():
             )
             
             application.add_handler(CommandHandler("start", start))
-            application.add_handler(CommandHandler("stop", stop_command))
-            application.add_handler(conv_handler)
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-            application.add_handler(CallbackQueryHandler(button_handler))
+            logger.info("✅ CommandHandler 'start' added")
             
-            # Обработчик ввода ID администратора
+            application.add_handler(CommandHandler("stop", stop_command))
+            logger.info("✅ CommandHandler 'stop' added")
+            
+            application.add_handler(conv_handler)
+            logger.info("✅ ConversationHandler added")
+            
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            logger.info("✅ MessageHandler for text added")
+            
+            application.add_handler(CallbackQueryHandler(button_handler))
+            logger.info("✅ CallbackQueryHandler added")
+            
+            # ✅ ВАЖНО: Добавляем обработчик для ввода ID администратора ПОСЛЕ основного обработчика сообщений
             application.add_handler(MessageHandler(
-                filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d+$'), 
+                filters.TEXT & ~filters.COMMAND, 
                 handle_admin_id_input
             ))
+            logger.info("✅ MessageHandler for admin ID input added")
             
-            setup_job_queue(application)
+            # Настраиваем job queue
+            try:
+                setup_job_queue(application)
+                logger.info("✅ Job queue setup completed")
+            except Exception as e:
+                logger.error(f"❌ Job queue setup failed: {e}")
             
             # Запускаем бота в режиме polling с УВЕЛИЧЕННЫМИ ИНТЕРВАЛАМИ
             logger.info("🤖 Bot starting in polling mode with optimized intervals...")
+            
+            # Проверяем доступность бота перед запуском
+            try:
+                bot_info = await application.bot.get_me()
+                logger.info(f"✅ Bot info: {bot_info.username} (ID: {bot_info.id})")
+            except Exception as e:
+                logger.error(f"❌ Bot token validation failed: {e}")
+                time.sleep(10)
+                continue
             
             # ИСПРАВЛЕНИЕ: Запускаем с правильной обработкой event loop
             application.run_polling(
@@ -3302,8 +3382,16 @@ def main():
             
             logger.info("🤖 Bot stopped - restarting...")
             
+        except Conflict as e:
+            logger.error(f"❌ CONFLICT ERROR: Another instance is running. {e}")
+            logger.info("🔄 Waiting 30 seconds before retry...")
+            time.sleep(30)
+            
         except Exception as e:
             logger.error(f"❌ Bot crashed with error: {e}")
+            logger.error(f"❌ Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             
             # Увеличиваем время ожидания после каждого перезапуска
             wait_time = min(10 * restart_count, 300)
