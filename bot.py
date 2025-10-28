@@ -2699,16 +2699,19 @@ def main():
     
     while True:
         try:
-	    # ПЕРЕД запуском бота - очистка старого состояния
-            import gc
-            gc.collect()
-            
-            # ПЕРЕСОЗДАЕМ соединение с БД при каждом перезапуске
-            global db
-            db = database.Database()
-
             restart_count += 1
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
+            
+            # ИСПРАВЛЕНИЕ: Запускаем бота в основном потоке с asyncio
+            import asyncio
+            
+            # Создаем новое событийное loop для каждого перезапуска
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Пересоздаем соединение с БД при каждом перезапуске
+            global db
+            db = database.Database()
             
             application = Application.builder().token(config.BOT_TOKEN).build()
             
@@ -2748,19 +2751,25 @@ def main():
             
             # Запускаем бота в режиме polling с обработкой ошибок
             logger.info("🤖 Bot starting in polling mode...")
-            application.run_polling(
+            
+            # ИСПРАВЛЕНИЕ: Запускаем в asyncio loop
+            loop.run_until_complete(application.run_polling(
                 poll_interval=3.0,
                 timeout=20,
                 drop_pending_updates=True
-            )
+            ))
             
-            # УБИРАЕМ ВЫХОД ИЗ ЦИКЛА - ВСЕГДА ПЕРЕЗАПУСКАЕМСЯ
+            # Закрываем loop после остановки бота
+            loop.close()
+            
             logger.info("🤖 Bot stopped - restarting...")
             
         except Exception as e:
-            logger.error(f"❌ Bot crashed: {e}")
-            wait_time = min(30 * restart_count, 300)
-            logger.info(f"🔄 Restarting in {wait_time}s...")
+            logger.error(f"❌ Bot crashed with error: {e}")
+            
+            # Увеличиваем время ожидания после каждого перезапуска
+            wait_time = min(10 * restart_count, 300)
+            logger.info(f"🔄 Restarting bot in {wait_time} seconds... (restart #{restart_count})")
             time.sleep(wait_time)
             
             # Принудительная очистка
