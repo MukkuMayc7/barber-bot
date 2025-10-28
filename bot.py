@@ -3362,16 +3362,8 @@ def main():
             # Запускаем бота в режиме polling с УВЕЛИЧЕННЫМИ ИНТЕРВАЛАМИ
             logger.info("🤖 Bot starting in polling mode with optimized intervals...")
             
-            # Проверяем доступность бота перед запуском
-            try:
-                bot_info = await application.bot.get_me()
-                logger.info(f"✅ Bot info: {bot_info.username} (ID: {bot_info.id})")
-            except Exception as e:
-                logger.error(f"❌ Bot token validation failed: {e}")
-                time.sleep(10)
-                continue
-            
-            # ИСПРАВЛЕНИЕ: Запускаем с правильной обработкой event loop
+            # ИСПРАВЛЕНИЕ: Убрана асинхронная проверка бота, так как main() не async
+            # Просто запускаем polling без предварительной проверки
             application.run_polling(
                 poll_interval=5.0,
                 timeout=25,
