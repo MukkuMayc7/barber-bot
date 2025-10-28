@@ -2203,10 +2203,16 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода ID администратора"""
     user_id = update.effective_user.id
-    logger.info(f"🔄 handle_admin_id_input вызван для пользователя {user_id}")
+    text = update.message.text
+    
+    logger.info(f"🔄 handle_admin_id_input ВЫЗВАН для пользователя {user_id}")
+    logger.info(f"📥 Текст сообщения: '{text}'")
+    logger.info(f"🔍 awaiting_admin_id: {context.user_data.get('awaiting_admin_id', 'NOT SET')}")
     
     if not context.user_data.get('awaiting_admin_id'):
         logger.info("❌ awaiting_admin_id = False, пропускаем обработку")
+        # Просто передаем обработку основному обработчику
+        await handle_message(update, context)
         return
     
     context.user_data['awaiting_admin_id'] = False
@@ -3339,18 +3345,20 @@ def main():
             application.add_handler(conv_handler)
             logger.info("✅ ConversationHandler added")
             
+            # ОСНОВНОЙ обработчик текстовых сообщений
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             logger.info("✅ MessageHandler for text added")
             
             application.add_handler(CallbackQueryHandler(button_handler))
             logger.info("✅ CallbackQueryHandler added")
             
-            # ✅ ВАЖНО: Добавляем обработчик для ввода ID администратора ПОСЛЕ основного обработчика сообщений
+            # ✅ ВАЖНО: Добавляем обработчик для ввода ID администратора в ОТДЕЛЬНОЙ ГРУППЕ
+            # Это гарантирует, что он будет обрабатываться ДО основного обработчика
             application.add_handler(MessageHandler(
                 filters.TEXT & ~filters.COMMAND, 
                 handle_admin_id_input
-            ))
-            logger.info("✅ MessageHandler for admin ID input added")
+            ), group=1)
+            logger.info("✅ MessageHandler for admin ID input added (group 1)")
             
             # Настраиваем job queue
             try:
@@ -3362,8 +3370,24 @@ def main():
             # Запускаем бота в режиме polling с УВЕЛИЧЕННЫМИ ИНТЕРВАЛАМИ
             logger.info("🤖 Bot starting in polling mode with optimized intervals...")
             
-            # ИСПРАВЛЕНИЕ: Убрана асинхронная проверка бота, так как main() не async
-            # Просто запускаем polling без предварительной проверки
+            # Проверяем токен бота синхронным способом
+            try:
+                import requests
+                bot_token = config.BOT_TOKEN
+                response = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10)
+                if response.status_code == 200:
+                    bot_info = response.json()
+                    logger.info(f"✅ Bot info: {bot_info['result']['username']} (ID: {bot_info['result']['id']})")
+                else:
+                    logger.error(f"❌ Bot token validation failed: {response.status_code}")
+                    time.sleep(10)
+                    continue
+            except Exception as e:
+                logger.error(f"❌ Bot token validation failed: {e}")
+                time.sleep(10)
+                continue
+            
+            # Запускаем polling
             application.run_polling(
                 poll_interval=5.0,
                 timeout=25,
