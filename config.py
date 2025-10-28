@@ -16,6 +16,9 @@ if not admin_ids_str:
 
 ADMIN_IDS = [int(id.strip()) for id in admin_ids_str.split(',') if id.strip()]
 
+# Защищенные администраторы (нельзя удалить)
+PROTECTED_ADMINS = ADMIN_IDS  # Все начальные администраторы защищены
+
 WORKING_HOURS = list(range(10, 20))
 REMINDER_HOURS_BEFORE = 24
 NOTIFICATION_CHAT_ID = None
