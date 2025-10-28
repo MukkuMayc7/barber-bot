@@ -425,27 +425,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Пожалуйста, используйте кнопки ниже для навигации",
                 reply_markup=get_main_keyboard(user_id)
             )
-    else:
-        # Обработка для обычного пользователя
-        if text == "📅 Записаться на стрижку":
-            await make_appointment_start(update, context, is_admin=False)
-        elif text == "📋 Мои записи":
-            await show_my_appointments(update, context)
-        elif text == "❌ Отменить запись":
-            await show_cancel_appointment(update, context)
-        elif text == "🗓️ График работы":
-            await show_work_schedule(update, context)
-        elif text == "ℹ️ О парикмахерской":
-            await about_barbershop(update, context)
-        elif text == "🔙 Главное меню":
-            await show_main_menu(update, context)
-        elif text == "🔙 Назад" and context.user_data.get('awaiting_phone'):
-            await date_selected_back(update, context)
-        else:
-            await update.message.reply_text(
-                "Пожалуйста, используйте кнопки ниже для навигации",
-                reply_markup=get_main_keyboard(user_id)
-            )
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает главное меню"""
@@ -455,7 +434,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"🏠 *Главное меню {config.BARBERSHOP_NAME}*\n\nВыберите действие на клавиатуре ниже:",
             parse_mode='Markdown'  # ← ЗДЕСЬ НЕ ХВАТАЕТ ЗАКРЫВАЮЩЕЙ СКОБКИ!
-        )  # ← ДОБАВЬТЕ ЭТУ СКОБКУ
+        )
     else:
         user_id = update.effective_user.id
         await update.message.reply_text(
