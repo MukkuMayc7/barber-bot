@@ -176,6 +176,25 @@ def start_enhanced_self_ping():
                 port = int(os.getenv('PORT', 5000))
                 try:
                     import requests
+                    # Проверяем общее здоровье
+                    health_url = f"http://localhost:{port}/deep-health"
+                    response = requests.get(health_url, timeout=5)
+                    
+                    if response.status_code == 200:
+                        health_data = response.json()
+                        if health_data.get('status') == 'healthy':
+                            logger.info("✅ Health check: ALL SYSTEMS GO")
+                        else:
+                            logger.warning(f"⚠️ Health check degraded: {health_data}")
+                    else:
+                        logger.warning(f"⚠️ Health check failed with status: {response.status_code}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Health check failed: {e}")
+
+                # Отдельный блок для keep-alive пинга
+                try:
+                    import requests
                     local_ping = f"http://localhost:{port}/keep-alive"
                     response = requests.get(local_ping, timeout=5)
                     logger.info("✅ Internal self-ping successful")
@@ -2680,6 +2699,14 @@ def main():
     
     while True:
         try:
+	    # ПЕРЕД запуском бота - очистка старого состояния
+            import gc
+            gc.collect()
+            
+            # ПЕРЕСОЗДАЕМ соединение с БД при каждом перезапуске
+            global db
+            db = database.Database()
+
             restart_count += 1
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
             
@@ -2731,11 +2758,9 @@ def main():
             logger.info("🤖 Bot stopped - restarting...")
             
         except Exception as e:
-            logger.error(f"❌ Bot crashed with error: {e}")
-            
-            # Увеличиваем время ожидания после каждого перезапуска
-            wait_time = min(10 * restart_count, 300)  # Максимум 5 минут
-            logger.info(f"🔄 Restarting bot in {wait_time} seconds... (restart #{restart_count})")
+            logger.error(f"❌ Bot crashed: {e}")
+            wait_time = min(30 * restart_count, 300)
+            logger.info(f"🔄 Restarting in {wait_time}s...")
             time.sleep(wait_time)
             
             # Принудительная очистка

@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 class Database:
     def __init__(self):
         self.database_url = config.DATABASE_URL
+        self.reconnect()  # Вместо прямого присвоения self.conn
+    
+    def reconnect(self):
+        """Переподключается к базе данных"""
+        if hasattr(self, 'conn') and self.conn:
+            try:
+                self.conn.close()
+            except:
+                pass
         self.conn = self.get_connection()
         self.create_tables()
         self.create_admin_tables()
