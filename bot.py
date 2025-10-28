@@ -2773,18 +2773,12 @@ def main():
             # Запускаем бота в режиме polling с обработкой ошибок
             logger.info("🤖 Bot starting in polling mode...")
             
-            try:
-                # ЗАПУСКАЕМ В РЕЖИМЕ POLLING С ПРАВИЛЬНЫМИ ПАРАМЕТРАМИ
-                application.run_polling(
-                    poll_interval=3.0,
-                    timeout=20,
-                    drop_pending_updates=True,
-                    close_loop=False,  # ВАЖНО: не закрывать loop
-                    stop_signals=None   # Отключаем обработку сигналов, так как у нас своя
-                )
-            except Exception as e:
-                logger.error(f"Polling error: {e}")
-                raise
+            # ПРОСТОЙ ВЫЗОВ БЕЗ ПРОБЛЕМНЫХ ПАРАМЕТРОВ
+            application.run_polling(
+                poll_interval=3.0,
+                timeout=20,
+                drop_pending_updates=True
+            )
             
             logger.info("🤖 Bot stopped - restarting...")
             
