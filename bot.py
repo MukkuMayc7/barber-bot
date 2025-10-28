@@ -363,20 +363,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик текстовых сообщений с кнопок"""
-    # ПЕРЕМЕСТИТЕ ЭТУ СТРОКУ В САМОЕ НАЧАЛО ФУНКЦИИ:
     user_id = update.effective_user.id
-    
     text = update.message.text
     
     # Обновляем время последней активности пользователя
     user = update.effective_user
     db.add_or_update_user(user.id, user.username, user.first_name, user.last_name)
     
-    if db.is_admin(user_id):
-        # Обработка для администратора
-        if text == "📝 Записать клиента вручную":
-            await make_appointment_start(update, context, is_admin=True)
     if db.is_admin(user_id):
         # Обработка для администратора
         if text == "📝 Записать клиента вручную":
@@ -1969,12 +1962,17 @@ async def manage_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
+# ========== ФУНКЦИИ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ ==========
+
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Управление администраторами"""
     user_id = update.effective_user.id
     
     if not db.is_admin(user_id):
-        await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        if update.callback_query:
+            await update.callback_query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        else:
+            await update.message.reply_text("❌ У вас нет доступа к этой функции")
         return
     
     keyboard = [
@@ -1995,7 +1993,7 @@ async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "👥 *Управление администраторами*\n\nВыберите действие:",
+            "👥 *Управление администраторов*\n\nВыберите действие:",
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
@@ -2003,6 +2001,12 @@ async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список администраторов"""
     query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
     admins = db.get_all_admins()
     
     if not admins:
@@ -2040,6 +2044,12 @@ async def show_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало процесса добавления администратора"""
     query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
     context.user_data['awaiting_admin_id'] = True
     
     try:
@@ -2062,6 +2072,12 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало процесса удаления администратора"""
     query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
     admins = db.get_all_admins()
     
     if len(admins) <= 1:
@@ -2097,10 +2113,14 @@ async def remove_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             raise
 
-async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
     """Подтверждение удаления администратора"""
     query = update.callback_query
-    admin_id = int(query.data.split("_")[3])
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
     
     admin_info = db.get_admin_info(admin_id)
     if not admin_info:
@@ -2135,35 +2155,37 @@ async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             raise
 
-async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
     """Финальное удаление администратора"""
     query = update.callback_query
-    admin_id = int(query.data.split("_")[3])
-    current_user_id = query.from_user.id
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
     
     # Нельзя удалить себя
-    if admin_id == current_user_id:
+    if admin_id == user_id:
         await query.answer("❌ Нельзя удалить самого себя", show_alert=True)
         return
     
     deleted = db.remove_admin(admin_id)
     
     if deleted:
-        try:
-            await query.edit_message_text(f"✅ Администратор с ID {admin_id} удален")
-        except BadRequest as e:
-            if "message is not modified" in str(e).lower():
-                logger.debug("Message not modified in remove_admin_final - ignoring")
-            else:
-                raise
+        text = f"✅ Администратор с ID {admin_id} удален"
     else:
-        try:
-            await query.edit_message_text("❌ Администратор не найден")
-        except BadRequest as e:
-            if "message is not modified" in str(e).lower():
-                logger.debug("Message not modified in remove_admin_final - ignoring")
-            else:
-                raise
+        text = "❌ Администратор не найден"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад к управлению", callback_data="manage_admins")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in remove_admin_final - ignoring")
+        else:
+            raise
 
 async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода ID администратора"""
@@ -2627,6 +2649,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         is_admin = db.is_admin(user_id)
         await make_appointment_start(update, context, is_admin=is_admin)
+    
+    # ДОБАВЬТЕ ЭТИ НОВЫЕ ОБРАБОТЧИКИ ДЛЯ АДМИНИСТРАТОРОВ:
+    elif query.data == "manage_admins":
+        await manage_admins(update, context)
+    elif query.data == "admin_list":
+        await show_admin_list(update, context)
+    elif query.data == "admin_add":
+        await add_admin_start(update, context)
+    elif query.data == "admin_remove":
+        await remove_admin_start(update, context)
+    elif query.data.startswith("admin_remove_confirm_"):
+        admin_id = int(query.data.split("_")[3])
+        await remove_admin_confirm(update, context, admin_id)
+    elif query.data.startswith("admin_remove_final_"):
+        admin_id = int(query.data.split("_")[3])
+        await remove_admin_final(update, context, admin_id)
+    
+    # ... остальные существующие обработчики ...
     elif query.data.startswith("service_"):
         await service_selected(update, context)
     elif query.data.startswith("date_"):
