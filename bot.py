@@ -1,4 +1,5 @@
 # bot.py
+# bot.py
 import logging
 import re
 import os
@@ -18,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import database
 import config
 import httpx
+import asyncio  # ДОБАВЛЕННЫЙ ИМПОРТ
 
 # Состояния для ConversationHandler
 SERVICE, DATE, TIME, PHONE = range(4)
@@ -160,9 +162,23 @@ def monitor():
 
 def run_web_server():
     """Запускает веб-сервер в отдельном потоке"""
-    port = int(os.getenv('PORT', 5000))
+    port = int(os.getenv('PORT', 10000))  # Render использует порт 10000
     logger.info(f"🌐 Starting web server on port {port}")
-    web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    # Отключаем логирование Werkzeug для уменьшения шума
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+    
+    try:
+        # Пробуем использовать Waitress для production
+        from waitress import serve
+        logger.info("🚀 Using Waitress production server")
+        serve(web_app, host='0.0.0.0', port=port, threads=4)
+    except ImportError:
+        # Fallback на Flask development server
+        logger.info("🚀 Using Flask development server (Waitress not available)")
+        web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def start_enhanced_self_ping():
     """Улучшенная система keep-alive"""
@@ -2680,7 +2696,7 @@ def main():
     """Главная функция с улучшенной обработкой ошибок"""
     logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support...")
     
-    # Регистрируем обработчики сигналов
+    # Устанавливаем обработчики сигналов ДО создания любых потоков
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
@@ -2757,12 +2773,18 @@ def main():
             # Запускаем бота в режиме polling с обработкой ошибок
             logger.info("🤖 Bot starting in polling mode...")
             
-            # ПРОСТОЙ ВЫЗОВ БЕЗ ASYNCIO
-            application.run_polling(
-                poll_interval=3.0,
-                timeout=20,
-                drop_pending_updates=True
-            )
+            try:
+                # ЗАПУСКАЕМ В РЕЖИМЕ POLLING С ПРАВИЛЬНЫМИ ПАРАМЕТРАМИ
+                application.run_polling(
+                    poll_interval=3.0,
+                    timeout=20,
+                    drop_pending_updates=True,
+                    close_loop=False,  # ВАЖНО: не закрывать loop
+                    stop_signals=None   # Отключаем обработку сигналов, так как у нас своя
+                )
+            except Exception as e:
+                logger.error(f"Polling error: {e}")
+                raise
             
             logger.info("🤖 Bot stopped - restarting...")
             
