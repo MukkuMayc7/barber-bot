@@ -741,6 +741,15 @@ class Database:
         cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
         return cursor.fetchone() is not None
 
+    def validate_admin_access(self, user_id):
+        """Проверяет и логирует доступ администратора"""
+        is_admin = self.is_admin(user_id)
+        if is_admin:
+            logger.info(f"🔐 Admin access granted for user_id: {user_id}")
+        else:
+            logger.warning(f"🚫 Unauthorized admin access attempt by user_id: {user_id}")
+        return is_admin
+
     def get_admin_info(self, admin_id):
         """Получает информацию об администраторе"""
         cursor = self.conn.cursor()
