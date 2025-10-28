@@ -2757,15 +2757,12 @@ def main():
             # Запускаем бота в режиме polling с обработкой ошибок
             logger.info("🤖 Bot starting in polling mode...")
             
-            # ИСПРАВЛЕНИЕ: Запускаем в asyncio loop
-            loop.run_until_complete(application.run_polling(
+            # ПРОСТОЙ ВЫЗОВ БЕЗ ASYNCIO
+            application.run_polling(
                 poll_interval=3.0,
                 timeout=20,
                 drop_pending_updates=True
-            ))
-            
-            # Закрываем loop после остановки бота
-            loop.close()
+            )
             
             logger.info("🤖 Bot stopped - restarting...")
             
