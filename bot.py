@@ -297,13 +297,13 @@ def get_main_keyboard(user_id):
     keyboard = []
     
     if db.is_admin(user_id):
-        # Клавиатура для администратора - НОВАЯ ЛОГИЧЕСКАЯ ГРУППИРОВКА
+        # Клавиатура для администратора - ИСПРАВЛЕННЫЕ НАЗВАНИЯ
         keyboard = [
             [KeyboardButton("📝 Записать клиента вручную")],
             [KeyboardButton("🗓️ График работы")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
             [KeyboardButton("📊 Записи сегодня"), KeyboardButton("📅 Записи на неделю"), KeyboardButton("👑 Все записи")],
-            [KeyboardButton("📈 Статистика"), KeyboardButton("👥 Управление администраторами")]
+            [KeyboardButton("📈 Статистика"), KeyboardButton("👥 Управление администраторами")]  # ИСПРАВЛЕНО НАЗВАНИЕ
         ]
     else:
         # Клавиатура для обычного пользователя
@@ -345,7 +345,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 *Записи сегодня* - записи на сегодня\n"
             "📈 *Статистика* - статистика пользователей бота\n"
             "🗓️ *График работы* - настройка расписания\n"
-            "👥 *Управление администраторами* - управление правами доступа"
+            "👥 *Управление администраторами* - управление правами доступа"  # ИСПРАВЛЕНО НАЗВАНИЕ
         )
     else:
         welcome_text += (
@@ -388,7 +388,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_cancel_appointment(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
-        elif text == "👥 Управление":
+        elif text == "👥 Управление администраторами":  # ИСПРАВЛЕНО НАЗВАНИЕ
             await manage_admins(update, context)
         elif text == "🔙 Главное меню":
             await show_main_menu(update, context)
@@ -516,7 +516,7 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Примечание:* пользователь считается активным, если использовал бота в течение последних 30 дней"
     )
     
-        # КНОПКА ОТЧЕТА ЗА НЕДЕЛЮ С ПРАВИЛЬНЫМ CALLBACK_DATA
+    # КНОПКА ОТЧЕТА ЗА НЕДЕЛЮ С ПРАВИЛЬНЫМ CALLBACK_DATA
     keyboard = [
         [InlineKeyboardButton("📊 Отчет за неделю", callback_data="weekly_report")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
@@ -560,7 +560,6 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # ИСПРАВЛЕННАЯ КЛАВИАТУРА - кнопка "Назад" теперь ведет на show_statistics
-
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="show_statistics")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -1536,7 +1535,7 @@ async def show_day_appointments_visual(update: Update, context: ContextTypes.DEF
         schedule_text += f"\n💡 Быстрые действия:\n"
         schedule_text += f"• Нажмите '🔄 Обновить' для актуального расписания\n"
         schedule_text += f"• Нажмите '📞 Все контакты' для просмотра всех номеров\n"
-        schedule_text += f"• Для отмены записи используйте кнопку '❌ Отменить запись' в главном меню"
+        schedule_text += f"• Для отмена записи используйте кнопку '❌ Отменить запись' в главном меню"
         
         full_text = header + schedule_text
         
@@ -1993,7 +1992,7 @@ async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "👥 *Управление администраторов*\n\nВыберите действие:",
+            "👥 *Управление администраторами*\n\nВыберите действие:",
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
@@ -2692,6 +2691,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "weekly_report":
         await weekly_report(update, context)
+    elif query.data == "show_statistics":  # ДОБАВЛЕННЫЙ ОБРАБОТЧИК
+        await show_statistics(update, context)
     elif query.data.startswith("schedule_working_"):
         await schedule_working_selected(update, context)
     elif query.data.startswith("schedule_off_"):
@@ -2702,19 +2703,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await schedule_end_selected(update, context)
     elif query.data == "manage_schedule":
         await manage_schedule(update, context)
-    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ АДМИНИСТРАТОРОВ
-    elif query.data == "manage_admins":
-        await manage_admins(update, context)
-    elif query.data == "admin_list":
-        await show_admin_list(update, context)
-    elif query.data == "admin_add":
-        await add_admin_start(update, context)
-    elif query.data == "admin_remove":
-        await remove_admin_start(update, context)
-    elif query.data.startswith("admin_remove_confirm_"):
-        await remove_admin_confirm(update, context)
-    elif query.data.startswith("admin_remove_final_"):
-        await remove_admin_final(update, context)
     # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ КОНФЛИКТОВ ГРАФИКА
     elif query.data == "schedule_cancel_appointments":
         await handle_schedule_cancel_appointments(update, context)
@@ -2749,13 +2737,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await called_confirmation(update, context)
     elif query.data == "confirm_cancel_slot":
         await confirm_cancel_slot(update, context)
-
-        # ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НЕДЕЛЬНОГО ОТЧЕТА И ВОЗВРАТА К СТАТИСТИКЕ
-
-    elif query.data == "weekly_report":
-        await weekly_report(update, context)
-    elif query.data == "show_statistics":  # ДОБАВЛЕННЫЙ ОБРАБОТЧИК
-        await show_statistics(update, context)
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
@@ -3240,7 +3221,7 @@ def main():
             restart_count += 1
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
             
-                        # ПЕРЕД созданием application - принудительно сбрасываем webhook
+            # ПЕРЕД созданием application - принудительно сбрасываем webhook
             try:
                 import requests
                 bot_token = config.BOT_TOKEN
