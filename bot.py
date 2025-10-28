@@ -364,8 +364,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений с кнопок"""
-    # ... существующий код ...
+    # ПЕРЕМЕСТИТЕ ЭТУ СТРОКУ В САМОЕ НАЧАЛО ФУНКЦИИ:
+    user_id = update.effective_user.id
     
+    text = update.message.text
+    
+    # Обновляем время последней активности пользователя
+    user = update.effective_user
+    db.add_or_update_user(user.id, user.username, user.first_name, user.last_name)
+    
+    if db.is_admin(user_id):
+        # Обработка для администратора
+        if text == "📝 Записать клиента вручную":
+            await make_appointment_start(update, context, is_admin=True)
     if db.is_admin(user_id):
         # Обработка для администратора
         if text == "📝 Записать клиента вручную":
