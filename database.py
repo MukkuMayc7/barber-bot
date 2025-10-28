@@ -510,7 +510,6 @@ class Database:
             'total_deleted': total_deleted
         }
 
-    # НОВЫЙ МЕТОД ДЛЯ ОЧИСТКИ ПО СРОКАМ 7/40 ДНЕЙ
     def cleanup_old_data(self):
         """Очистка данных по установленным срокам: записи - 7 дней, пользователи - 40 дней"""
         cursor = self.conn.cursor()
@@ -549,8 +548,6 @@ class Database:
             'deleted_appointments': deleted_appointments,
             'deleted_users': deleted_users
         }
-
-    # НОВЫЙ МЕТОД ДЛЯ СБОРКИ СТАТИСТИКИ ЗА НЕДЕЛЮ
 
     def get_weekly_stats(self):
         """Собирает статистику за прошедшую неделю (только завершенные записи)"""
@@ -618,8 +615,6 @@ class Database:
             'new_clients': new_clients,
             'regular_clients': regular_clients
         }
-
-    # НОВЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ КОНФЛИКТОВ ПРИ ИЗМЕНЕНИИ ГРАФИКА
 
     def get_conflicting_appointments(self, weekday, new_start_time, new_end_time, new_is_working):
         """Находит конфликтующие записи при изменении графика"""
@@ -695,99 +690,82 @@ class Database:
         logger.info(f"Всего отменено записей: {len(canceled_appointments)}")
         return canceled_appointments
 
-    # НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
+    # ИСПРАВЛЕННЫЕ МЕТОДЫ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
 
-    # НОВЫЕ ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
-
-def add_admin(self, admin_id, username, first_name, last_name, added_by):
-    """Добавляет администратора"""
-    try:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT INTO admins (user_id, username, first_name, last_name, added_by, added_at)
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (user_id) DO NOTHING
-        ''', (admin_id, username, first_name, last_name, added_by))
-        self.conn.commit()
-        
-        added = cursor.rowcount > 0
-        if added:
-            logger.info(f"✅ Добавлен администратор {admin_id}")
-        else:
-            logger.info(f"⚠️ Администратор {admin_id} уже существует")
+    def add_admin(self, admin_id, username, first_name, last_name, added_by):
+        """Добавляет администратора"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (admin_id) DO NOTHING
+            ''', (admin_id, username, first_name, last_name, added_by))
+            self.conn.commit()
             
-        return added
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при добавлении администратора {admin_id}: {e}")
-        self.conn.rollback()
-        return False
-
-def remove_admin(self, admin_id):
-    """Удаляет администратора, если он не защищен"""
-    try:
-        # Проверяем, не защищен ли администратор
-        if admin_id in config.PROTECTED_ADMINS:
-            logger.warning(f"🚫 Попытка удалить защищенного администратора {admin_id}")
+            added = cursor.rowcount > 0
+            if added:
+                logger.info(f"✅ Добавлен администратор {admin_id}")
+            else:
+                logger.info(f"⚠️ Администратор {admin_id} уже существует")
+                
+            return added
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при добавлении администратора {admin_id}: {e}")
+            self.conn.rollback()
             return False
+
+    def remove_admin(self, admin_id):
+        """Удаляет администратора, если он не защищен"""
+        try:
+            # Проверяем, не защищен ли администратор
+            if hasattr(config, 'PROTECTED_ADMINS') and admin_id in config.PROTECTED_ADMINS:
+                logger.warning(f"🚫 Попытка удалить защищенного администратора {admin_id}")
+                return False
+                
+            cursor = self.conn.cursor()
+            cursor.execute('DELETE FROM bot_admins WHERE admin_id = %s', (admin_id,))
+            self.conn.commit()
             
-        cursor = self.conn.cursor()
-        cursor.execute('DELETE FROM admins WHERE user_id = %s', (admin_id,))
-        self.conn.commit()
-        
-        deleted = cursor.rowcount > 0
-        if deleted:
-            logger.info(f"✅ Администратор {admin_id} удален из БД")
-        else:
-            logger.warning(f"⚠️ Администратор {admin_id} не найден в БД")
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.info(f"✅ Администратор {admin_id} удален из БД")
+            else:
+                logger.warning(f"⚠️ Администратор {admin_id} не найден в БД")
+                
+            return deleted
             
-        return deleted
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при удалении администратора {admin_id}: {e}")
-        self.conn.rollback()
-        return False
+        except Exception as e:
+            logger.error(f"❌ Ошибка при удалении администратора {admin_id}: {e}")
+            self.conn.rollback()
+            return False
 
-def get_all_admins(self):
-    """Возвращает список всех администраторов"""
-    try:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT user_id, username, first_name, last_name, added_at, added_by 
-            FROM admins 
-            ORDER BY added_at DESC
-        ''')
-        admins = cursor.fetchall()
-        logger.info(f"📊 Загружено {len(admins)} администраторов из БД")
-        return admins
-    except Exception as e:
-        logger.error(f"❌ Ошибка при получении списка администраторов: {e}")
-        return []
+    def get_all_admins(self):
+        """Возвращает список всех администраторов"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT admin_id, username, first_name, last_name, added_at, added_by 
+                FROM bot_admins 
+                ORDER BY added_at DESC
+            ''')
+            admins = cursor.fetchall()
+            logger.info(f"📊 Загружено {len(admins)} администраторов из БД")
+            return admins
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении списка администраторов: {e}")
+            return []
 
-def get_admin_info(self, admin_id):
-    """Возвращает информацию об администраторе по ID"""
-    try:
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT user_id, username, first_name, last_name, added_at, added_by 
-            FROM admins 
-            WHERE user_id = %s
-        ''', (admin_id,))
-        admin = cursor.fetchone()
-        return admin
-    except Exception as e:
-        logger.error(f"❌ Ошибка при получении информации об администраторе {admin_id}: {e}")
-        return None
-
-def is_admin(self, user_id):
-    """Проверяет, является ли пользователь администратором"""
-    try:
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT 1 FROM admins WHERE user_id = %s', (user_id,))
-        return cursor.fetchone() is not None
-    except Exception as e:
-        logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
-        return False
+    def is_admin(self, user_id):
+        """Проверяет, является ли пользователь администратором"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
+            return False
 
     def validate_admin_access(self, user_id):
         """Проверяет и логирует доступ администратора"""
