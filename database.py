@@ -692,6 +692,21 @@ class Database:
 
     # ИСПРАВЛЕННЫЕ МЕТОДЫ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
 
+    def is_admin(self, user_id):
+        """Проверяет, является ли пользователь администратором"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
+            result = cursor.fetchone() is not None
+            if result:
+                logger.info(f"🔐 Admin access granted for user_id: {user_id}")
+            else:
+                logger.warning(f"🚫 Unauthorized admin access attempt by user_id: {user_id}")
+            return result
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
+            return False
+
     def add_admin(self, admin_id, username, first_name, last_name, added_by):
         """Добавляет администратора"""
         try:
@@ -756,25 +771,6 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка при получении списка администраторов: {e}")
             return []
-
-    def is_admin(self, user_id):
-        """Проверяет, является ли пользователь администратором"""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
-            return cursor.fetchone() is not None
-        except Exception as e:
-            logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
-            return False
-
-    def validate_admin_access(self, user_id):
-        """Проверяет и логирует доступ администратора"""
-        is_admin = self.is_admin(user_id)
-        if is_admin:
-            logger.info(f"🔐 Admin access granted for user_id: {user_id}")
-        else:
-            logger.warning(f"🚫 Unauthorized admin access attempt by user_id: {user_id}")
-        return is_admin
 
     def get_admin_info(self, admin_id):
         """Получает информацию об администраторе"""
