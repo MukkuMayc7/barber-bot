@@ -530,10 +530,11 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает отчет за прошедшую неделю"""
-    user_id = update.effective_user.id
+    query = update.callback_query
+    user_id = query.from_user.id
     
     if not db.is_admin(user_id):
-        await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
         return
     
     try:
@@ -543,36 +544,29 @@ async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Форматируем отчет
         text = (
             f"📊 *ОТЧЕТ ЗА ПРОШЕДШУЮ НЕДЕЛЮ*\n\n"
-            f"📅 Период: {stats['start_date']} - {stats['end_date']}\n"
-            f"📋 Всего записей: {stats['total_appointments']}\n"
+            f"📅 *Период:* {stats['start_date']} - {stats['end_date']}\n"
+            f"📋 *Всего записей:* {stats['total_appointments']}\n"
         )
         
         if stats['peak_time'] != "Нет данных":
-            text += f"⏰ Пиковое время: {stats['peak_time']} ({stats['peak_time_count']} записей)\n"
+            text += f"⏰ *Пиковое время:* {stats['peak_time']} ({stats['peak_time_count']} записей)\n"
         else:
-            text += f"⏰ Пиковое время: {stats['peak_time']}\n"
+            text += f"⏰ *Пиковое время:* {stats['peak_time']}\n"
             
         text += (
-            f"👥 Новые клиенты: {stats['new_clients']}\n"
-            f"📞 Постоянные клиенты: {stats['regular_clients']}"
+            f"👥 *Новые клиенты:* {stats['new_clients']}\n"
+            f"📞 *Постоянные клиенты:* {stats['regular_clients']}"
         )
         
-        keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="show_statistics")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if update.callback_query:
-            query = update.callback_query
-            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
             
     except Exception as e:
         logger.error(f"Ошибка при формировании отчета: {e}")
         error_text = "❌ Ошибка при формировании отчета. Попробуйте позже."
-        if update.callback_query:
-            await update.callback_query.edit_message_text(error_text)
-        else:
-            await update.message.reply_text(error_text)
+        await query.edit_message_text(error_text)
 
 async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_TYPE, is_admin=False):
     """Начало процесса записи"""
@@ -1322,7 +1316,7 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
             }
         
         # Формируем текст расписания
-        header = f"📅 {today_str} | {len(appointments)}/{len(all_slots)} занято\n\n"
+        header = f"📅 *{today_str}* | {len(appointments)}/{len(all_slots)} занято\n\n"
         
         schedule_text = ""
         total_booked = 0
@@ -1330,13 +1324,16 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
         for slot in all_slots:
             if slot in booked_slots:
                 client_info = booked_slots[slot]
-                schedule_text += f"⏰ {slot} ─── 👤 {client_info['name']} {client_info['phone']}\n"
+                # Экранируем специальные символы Markdown
+                safe_name = client_info['name'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
+                safe_phone = client_info['phone'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
+                schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name} {safe_phone}\n"
                 total_booked += 1
             else:
-                schedule_text += f"⏰ {slot} ─── ✅ Свободно\n"
+                schedule_text += f"⏰ *{slot}* ─── ✅ Свободно\n"
 
-        # Добавляем инструкцию по управлению
-        schedule_text += f"\n💡 *Быстрые действия:*\n"
+        # Добавляем инструкцию по управлению (без Markdown разметки)
+        schedule_text += f"\n💡 Быстрые действия:\n"
         schedule_text += f"• Нажмите '🔄 Обновить' для актуального расписания\n"
         schedule_text += f"• Нажмите '📞 Все контакты' для просмотра всех номеров\n"
         schedule_text += f"• Для отмены записи используйте кнопку '❌ Отменить запись' в главном меню"
@@ -2366,7 +2363,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Ошибка: неверный ID записи")
     elif query.data.startswith("schedule_day_"):
     	await schedule_day_selected(update, context)
+
     # ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НЕДЕЛЬНОГО ОТЧЕТА
+
     elif query.data == "weekly_report":
     	await weekly_report(update, context)
     elif query.data.startswith("schedule_working_"):
