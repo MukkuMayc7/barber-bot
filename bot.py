@@ -181,14 +181,14 @@ def run_web_server():
         web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def start_enhanced_self_ping():
-    """Улучшенная система keep-alive"""
+    """Улучшенная система keep-alive для Render"""
     def enhanced_ping_loop():
         while True:
             try:
                 # УВЕЛИЧИМ ЧАСТОТУ: ждем 2 минуты вместо 5
                 time.sleep(120)
                 
-                # Пингуем сами себя
+                # 1. Пингуем сами себя через localhost (существующий код)
                 port = int(os.getenv('PORT', 5000))
                 try:
                     import requests
@@ -217,7 +217,26 @@ def start_enhanced_self_ping():
                 except Exception as e:
                     logger.warning(f"⚠️ Internal ping failed: {e}")
                 
-                # Пингуем внешние сервисы чаще
+                # 2. ДОБАВЛЯЕМ: пингуем ВНЕШНИЙ URL Render (новый код)
+                try:
+                    render_url = os.getenv('RENDER_EXTERNAL_URL', 'https://barber-bot-xg8f.onrender.com')
+                    external_ping_urls = [
+                        f"{render_url}/",
+                        f"{render_url}/ping",
+                        f"{render_url}/keep-alive"
+                    ]
+                    
+                    for url in external_ping_urls:
+                        response = requests.get(url, timeout=10)
+                        if response.status_code == 200:
+                            logger.info(f"🌐 Render external ping: {url} - SUCCESS")
+                        else:
+                            logger.warning(f"🌐 Render external ping: {url} - {response.status_code}")
+                            
+                except Exception as e:
+                    logger.warning(f"🌐 Render external ping failed: {e}")
+                
+                # 3. Пингуем внешние сервисы (существующий код)
                 external_urls = [
                     "https://www.google.com",
                     "https://api.telegram.org", 
