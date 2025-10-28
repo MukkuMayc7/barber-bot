@@ -2899,7 +2899,7 @@ def main():
             restart_count += 1
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
             
-            # ПЕРЕД созданием application - принудительно сбрасываем webhook
+                        # ПЕРЕД созданием application - принудительно сбрасываем webhook
             try:
                 import requests
                 bot_token = config.BOT_TOKEN
@@ -2940,10 +2940,10 @@ def main():
             )
             
             application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("stop", stop_command))  # ДОБАВЛЯЕМ ЭТУ СТРОЧКУ
-        application.add_handler(conv_handler)
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        application.add_handler(CallbackQueryHandler(button_handler))
+            application.add_handler(CommandHandler("stop", stop_command))
+            application.add_handler(conv_handler)
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            application.add_handler(CallbackQueryHandler(button_handler))
             
             # Обработчик ввода ID администратора
             application.add_handler(MessageHandler(
