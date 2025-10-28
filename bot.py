@@ -2203,7 +2203,7 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода ID администратора"""
     user_id = update.effective_user.id
-    text = update.message.text
+    text = update.message.text.strip()
     
     logger.info(f"🔄 handle_admin_id_input ВЫЗВАН для пользователя {user_id}")
     logger.info(f"📥 Текст сообщения: '{text}'")
@@ -2216,8 +2216,6 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     context.user_data['awaiting_admin_id'] = False
-    text = update.message.text.strip()
-    
     logger.info(f"📥 Получен ID для добавления администратора: '{text}' от пользователя {user_id}")
     
     try:
@@ -2233,31 +2231,70 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return
         
-        # Получаем информацию о пользователе
+        # Получаем информацию о пользователе (с улучшенной обработкой ошибок)
+        username = "unknown"
+        first_name = "Пользователь"
+        last_name = f"ID {new_admin_id}"
+        
         try:
             logger.info(f"🔍 Получаем информацию о пользователе {new_admin_id}")
+            # Пытаемся получить информацию о пользователе
             chat_member = await context.bot.get_chat_member(new_admin_id, new_admin_id)
-            username = chat_member.user.username
-            first_name = chat_member.user.first_name
-            last_name = chat_member.user.last_name or ""
+            username = chat_member.user.username or "unknown"
+            first_name = chat_member.user.first_name or "Пользователь"
+            last_name = chat_member.user.last_name or f"ID {new_admin_id}"
             logger.info(f"✅ Информация получена: {first_name} {last_name} (@{username})")
         except Exception as e:
             # Если не можем получить информацию, используем значения по умолчанию
             logger.warning(f"⚠️ Не удалось получить информацию о пользователе {new_admin_id}: {e}")
-            username = "unknown"
-            first_name = "Пользователь"
-            last_name = f"ID {new_admin_id}"
+            logger.info("ℹ️ Используем значения по умолчанию для имени пользователя")
         
         # Добавляем администратора
         logger.info(f"➕ Добавляем администратора {new_admin_id} в БД")
-        success = db.add_admin(new_admin_id, username, first_name, last_name, user_id)
-        
-        if not success:
-            logger.error(f"❌ Ошибка при добавлении администратора {new_admin_id} в БД")
+        try:
+            success = db.add_admin(new_admin_id, username, first_name, last_name, user_id)
+            
+            if success:
+                display_name = f"{first_name} {last_name}".strip()
+                if username and username != 'unknown':
+                    display_name += f" (@{username})"
+                
+                logger.info(f"✅ Администратор {new_admin_id} успешно добавлен")
+                await update.message.reply_text(
+                    f"✅ *Новый администратор добавлен!*\n\n"
+                    f"👤 *Имя:* {display_name}\n"
+                    f"🆔 *ID:* {new_admin_id}\n\n"
+                    f"Пользователь получил доступ к админ-панели.\n\n"
+                    f"*Примечание:* Пользователь должен начать диалог с ботом (@{context.bot.username}), чтобы бот мог отправлять ему уведомления.",
+                    parse_mode='Markdown',
+                    reply_markup=get_main_keyboard(user_id)
+                )
+            else:
+                logger.error(f"❌ Ошибка при добавлении администратора {new_admin_id} в БД")
+                await update.message.reply_text(
+                    "❌ Ошибка при добавлении администратора в базу данных. Попробуйте еще раз.",
+                    reply_markup=get_main_keyboard(user_id)
+                )
+                
+        except Exception as db_error:
+            logger.error(f"❌ Ошибка БД при добавлении администратора: {db_error}")
             await update.message.reply_text(
-                "❌ Ошибка при добавлении администратора в базу данных",
+                "❌ Ошибка базы данных при добавлении администратора. Попробуйте еще раз.",
                 reply_markup=get_main_keyboard(user_id)
             )
+        
+    except ValueError:
+        logger.error(f"❌ Неверный формат ID: '{text}'")
+        await update.message.reply_text(
+            "❌ Неверный формат ID. Введите числовой ID пользователя:",
+            reply_markup=get_main_keyboard(user_id)
+        )
+    except Exception as e:
+        logger.error(f"❌ Общая ошибка при добавлении администратора: {e}")
+        await update.message.reply_text(
+            "❌ Ошибка при добавлении администратора. Проверьте правильность ID и попробуйте еще раз.",
+            reply_markup=get_main_keyboard(user_id)
+        )
             return
         
         display_name = f"{first_name} {last_name}".strip()
