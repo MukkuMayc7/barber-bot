@@ -303,7 +303,7 @@ def get_main_keyboard(user_id):
             [KeyboardButton("🗓️ График работы")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
             [KeyboardButton("📊 Записи сегодня"), KeyboardButton("📅 Записи на неделю"), KeyboardButton("👑 Все записи")],
-            [KeyboardButton("📈 Статистика"), KeyboardButton("👥 Управление")]
+            [KeyboardButton("📈 Статистика"), KeyboardButton("👥 Управление администраторами")]
         ]
     else:
         # Клавиатура для обычного пользователя
@@ -345,7 +345,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 *Записи сегодня* - записи на сегодня\n"
             "📈 *Статистика* - статистика пользователей бота\n"
             "🗓️ *График работы* - настройка расписания\n"
-            "👥 *Управление администраторов* - управление правами доступа"
+            "👥 *Управление администраторами* - управление правами доступа"
         )
     else:
         welcome_text += (
@@ -388,7 +388,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_cancel_appointment(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
-        elif text == "👥 Управление администраторами":
+        elif text == "👥 Управление":
             await manage_admins(update, context)
         elif text == "🔙 Главное меню":
             await show_main_menu(update, context)
