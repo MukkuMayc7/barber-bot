@@ -512,7 +512,11 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Примечание:* пользователь считается активным, если использовал бота в течение последних 30 дней"
     )
     
-    keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+    # ДОБАВЛЯЕМ КНОПКУ ОТЧЕТА ЗА НЕДЕЛЮ
+    keyboard = [
+        [InlineKeyboardButton("📊 Отчет за неделю", callback_data="weekly_report")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if update.callback_query:
@@ -520,6 +524,52 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает отчет за прошедшую неделю"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        return
+    
+    try:
+        # Получаем статистику за неделю
+        stats = db.get_weekly_stats()
+        
+        # Форматируем отчет
+        text = (
+            f"📊 *ОТЧЕТ ЗА ПРОШЕДШУЮ НЕДЕЛЮ*\n\n"
+            f"📅 Период: {stats['start_date']} - {stats['end_date']}\n"
+            f"📋 Всего записей: {stats['total_appointments']}\n"
+        )
+        
+        if stats['peak_time'] != "Нет данных":
+            text += f"⏰ Пиковое время: {stats['peak_time']} ({stats['peak_time_count']} записей)\n"
+        else:
+            text += f"⏰ Пиковое время: {stats['peak_time']}\n"
+            
+        text += (
+            f"👥 Новые клиенты: {stats['new_clients']}\n"
+            f"📞 Постоянные клиенты: {stats['regular_clients']}"
+        )
+        
+        keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            query = update.callback_query
+            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Ошибка при формировании отчета: {e}")
+        error_text = "❌ Ошибка при формировании отчета. Попробуйте позже."
+        if update.callback_query:
+            await update.callback_query.edit_message_text(error_text)
+        else:
+            await update.message.reply_text(error_text)
 
 async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_TYPE, is_admin=False):
     """Начало процесса записи"""
@@ -2346,6 +2396,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await called_confirmation(update, context)
     elif query.data == "confirm_cancel_slot":
         await confirm_cancel_slot(update, context)
+    elif query.data == "weekly_report":
+        await weekly_report(update, context)
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Обработчик отмены записи"""
@@ -2696,6 +2748,14 @@ async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
     if cleanup_result['total_deleted'] > 0:
         logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
 
+async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
+    """Ежедневная очистка старых данных по срокам 7/40 дней"""
+    try:
+        cleanup_result = db.cleanup_old_data()
+        logger.info(f"✅ Автоочистка БД выполнена: {cleanup_result}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при автоочистке БД: {e}")
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
     
@@ -2703,6 +2763,9 @@ def setup_job_queue(application: Application):
     job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
+    
+    # ДОБАВЛЯЕМ ЕЖЕДНЕВНУЮ ОЧИСТКУ ПО СРОКАМ 7/40 ДНЕЙ
+    job_queue.run_daily(cleanup_old_data, time=datetime.strptime("03:00", "%H:%M").time(), name="cleanup_old_data")
     
     # Периодическая очистка прошедших записей (каждые 30 минут)
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")

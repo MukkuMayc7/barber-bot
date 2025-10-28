@@ -462,7 +462,7 @@ class Database:
         ''', (cutoff_date,))
         return cursor.fetchone()[0]
 
-    def cleanup_completed_appointments(self):
+        def cleanup_completed_appointments(self):
         """Очищает прошедшие записи"""
         cursor = self.conn.cursor()
         now = datetime.now()
@@ -508,6 +508,115 @@ class Database:
             'deleted_past_dates': deleted_past_dates,
             'deleted_today': deleted_today,
             'total_deleted': total_deleted
+        }
+
+    # НОВЫЙ МЕТОД ДЛЯ ОЧИСТКИ ПО СРОКАМ 7/40 ДНЕЙ
+    def cleanup_old_data(self):
+        """Очистка данных по установленным срокам: записи - 7 дней, пользователи - 40 дней"""
+        cursor = self.conn.cursor()
+        
+        # 1. Очистка записей старше 7 дней
+        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        cursor.execute('''
+            DELETE FROM appointments 
+            WHERE appointment_date < %s
+        ''', (seven_days_ago,))
+        deleted_appointments = cursor.rowcount
+        
+        # 2. Очистка неактивных пользователей старше 40 дней
+        forty_days_ago = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute('''
+            DELETE FROM bot_users 
+            WHERE last_seen < %s 
+            AND user_id NOT IN (
+                SELECT DISTINCT user_id FROM appointments 
+                WHERE user_id IS NOT NULL
+            )
+        ''', (forty_days_ago,))
+        deleted_users = cursor.rowcount
+        
+        # 3. Очистка расписания старше 7 дней
+        cursor.execute('''
+            DELETE FROM schedule 
+            WHERE date < %s
+        ''', (seven_days_ago,))
+        
+        self.conn.commit()
+        
+        logger.info(f"🚮 Очистка БД: удалено {deleted_appointments} записей (>7 дней), {deleted_users} пользователей (>40 дней неактивности)")
+        
+        return {
+            'deleted_appointments': deleted_appointments,
+            'deleted_users': deleted_users
+        }
+
+    # НОВЫЙ МЕТОД ДЛЯ СБОРКИ СТАТИСТИКИ ЗА НЕДЕЛЮ
+
+    def get_weekly_stats(self):
+        """Собирает статистику за прошедшую неделю (только завершенные записи)"""
+        cursor = self.conn.cursor()
+        
+        # Определяем период: последние 7 дней (исключая сегодня)
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=7)
+        
+        # 1. Общее количество завершенных записей
+        cursor.execute('''
+            SELECT COUNT(*) 
+            FROM appointments 
+            WHERE appointment_date >= %s AND appointment_date < %s
+        ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+        total_appointments = cursor.fetchone()[0]
+        
+        # 2. Пиковое время (самое популярное время записи)
+        cursor.execute('''
+            SELECT appointment_time, COUNT(*) as count
+            FROM appointments 
+            WHERE appointment_date >= %s AND appointment_date < %s
+            GROUP BY appointment_time 
+            ORDER BY count DESC 
+            LIMIT 1
+        ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+        peak_time_result = cursor.fetchone()
+        peak_time = peak_time_result[0] if peak_time_result else "Нет данных"
+        peak_time_count = peak_time_result[1] if peak_time_result else 0
+        
+        # 3. Новые клиенты (впервые записавшиеся за период)
+        cursor.execute('''
+            SELECT COUNT(DISTINCT user_id) 
+            FROM appointments 
+            WHERE appointment_date >= %s AND appointment_date < %s
+            AND user_id IS NOT NULL 
+            AND user_id NOT IN (
+                SELECT DISTINCT user_id 
+                FROM appointments 
+                WHERE appointment_date < %s
+            )
+        ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), start_date.strftime("%Y-%m-%d")))
+        new_clients = cursor.fetchone()[0]
+        
+        # 4. Постоянные клиенты (уже записывавшиеся ранее)
+        cursor.execute('''
+            SELECT COUNT(DISTINCT user_id) 
+            FROM appointments 
+            WHERE appointment_date >= %s AND appointment_date < %s
+            AND user_id IS NOT NULL 
+            AND user_id IN (
+                SELECT DISTINCT user_id 
+                FROM appointments 
+                WHERE appointment_date < %s
+            )
+        ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), start_date.strftime("%Y-%m-%d")))
+        regular_clients = cursor.fetchone()[0]
+        
+        return {
+            'start_date': start_date.strftime("%d.%m.%Y"),
+            'end_date': (end_date - timedelta(days=1)).strftime("%d.%m.%Y"),
+            'total_appointments': total_appointments,
+            'peak_time': peak_time,
+            'peak_time_count': peak_time_count,
+            'new_clients': new_clients,
+            'regular_clients': regular_clients
         }
 
     # НОВЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ КОНФЛИКТОВ ПРИ ИЗМЕНЕНИИ ГРАФИКА
