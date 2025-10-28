@@ -366,6 +366,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
     
+    # ПЕРВЫЙ приоритет: обработка ввода ID администратора
+    if context.user_data.get('awaiting_admin_id'):
+        await handle_admin_id_input(update, context)
+        return
+    
     # Обновляем время последней активности пользователя
     user = update.effective_user
     db.add_or_update_user(user.id, user.username, user.first_name, user.last_name)
@@ -388,8 +393,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_cancel_appointment(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
-        elif text == "👥 Управление администраторами":  # ИСПРАВЛЕНО НАЗВАНИЕ
+        elif text == "👥 Управление администраторами":
             await manage_admins(update, context)
+        elif text == "🔙 Главное меню":
+            await show_main_menu(update, context)
+        elif text == "🔙 Назад" and context.user_data.get('awaiting_phone'):
+            await date_selected_back(update, context)
+        else:
+            await update.message.reply_text(
+                "Пожалуйста, используйте кнопки ниже для навигации",
+                reply_markup=get_main_keyboard(user_id)
+            )
+    else:
+        # Обработка для обычного пользователя
+        if text == "📅 Записаться на стрижку":
+            await make_appointment_start(update, context, is_admin=False)
+        elif text == "📋 Мои записи":
+            await show_my_appointments(update, context)
+        elif text == "❌ Отменить запись":
+            await show_cancel_appointment(update, context)
+        elif text == "🗓️ График работы":
+            await show_work_schedule(update, context)
+        elif text == "ℹ️ О парикмахерской":
+            await about_barbershop(update, context)
         elif text == "🔙 Главное меню":
             await show_main_menu(update, context)
         elif text == "🔙 Назад" and context.user_data.get('awaiting_phone'):
@@ -428,8 +454,8 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         await query.edit_message_text(
             f"🏠 *Главное меню {config.BARBERSHOP_NAME}*\n\nВыберите действие на клавиатуре ниже:",
-            parse_mode='Markdown'
-        )
+            parse_mode='Markdown'  # ← ЗДЕСЬ НЕ ХВАТАЕТ ЗАКРЫВАЮЩЕЙ СКОБКИ!
+        )  # ← ДОБАВЬТЕ ЭТУ СКОБКУ
     else:
         user_id = update.effective_user.id
         await update.message.reply_text(
@@ -3336,25 +3362,30 @@ def main():
     
     logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support and CONFLICT PROTECTION...")
     
-    # ПРЕДВАРИТЕЛЬНАЯ ОЧИСТКА WEBHOOK ДЛЯ ПРЕДОТВРАЩЕНИЯ КОНФЛИКТОВ
+    # УСИЛЕННАЯ ОЧИСТКА WEBHOOK ДЛЯ RENDER
     try:
         import requests
         bot_token = config.BOT_TOKEN
-        # Принудительно удаляем webhook
-        response = requests.post(
-            f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
-            timeout=10
-        )
-        logger.info(f"✅ Webhook deletion response: {response.status_code}")
-        
-        # Сбрасываем updates
-        response = requests.post(
-            f"https://api.telegram.org/bot{bot_token}/getUpdates",
-            json={"offset": -1},
-            timeout=10
-        )
-        logger.info("✅ Updates reset completed")
-        time.sleep(3)  # Даем время для очистки
+        # Принудительно удаляем webhook несколько раз
+        for i in range(3):
+            try:
+                response = requests.post(
+                    f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
+                    timeout=10
+                )
+                logger.info(f"✅ Webhook deletion attempt {i+1}: {response.status_code}")
+                
+                # Сбрасываем updates
+                response = requests.post(
+                    f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                    json={"offset": -1, "limit": 1},
+                    timeout=10
+                )
+                logger.info(f"✅ Updates reset attempt {i+1}")
+                time.sleep(2)
+            except Exception as e:
+                logger.warning(f"⚠️ Webhook cleanup attempt {i+1} failed: {e}")
+                
     except Exception as e:
         logger.warning(f"⚠️ Webhook cleanup warning: {e}")
     
@@ -3372,12 +3403,13 @@ def main():
     logger.info("🔁 Enhanced self-ping service started")
     
     # Даем веб-серверу время на запуск
-    time.sleep(3)
+    time.sleep(5)
     
     # Создаем и настраиваем бота с обработкой ошибок
     restart_count = 0
+    max_restarts = 10
     
-    while True:
+    while restart_count < max_restarts:
         try:
             restart_count += 1
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
@@ -3386,14 +3418,16 @@ def main():
             try:
                 import requests
                 bot_token = config.BOT_TOKEN
-                # Принудительно удаляем webhook и сбрасываем updates
-                requests.post(f"https://api.telegram.org/bot{bot_token}/deleteWebhook", timeout=5)
-                requests.post(f"https://api.telegram.org/bot{bot_token}/getUpdates", 
-                            json={"offset": -1}, timeout=5)  # Сбрасываем offset
-                logger.info("✅ Forced webhook cleanup completed")
-                time.sleep(2)
+                # Окончательная очистка webhook
+                response = requests.post(
+                    f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
+                    json={"drop_pending_updates": True},
+                    timeout=10
+                )
+                logger.info(f"✅ Final webhook cleanup: {response.status_code}")
+                time.sleep(3)
             except Exception as e:
-                logger.warning(f"⚠️ Webhook cleanup failed: {e}")
+                logger.warning(f"⚠️ Final webhook cleanup failed: {e}")
             
             # Пересоздаем соединение с БД при каждом перезапуске
             global db
@@ -3405,7 +3439,7 @@ def main():
                 time.sleep(10)
                 continue
             
-            # ИСПРАВЛЕНИЕ: Создаем application с правильной настройкой event loop
+            # Создаем application
             application = Application.builder().token(config.BOT_TOKEN).build()
             logger.info("✅ Application created")
             
@@ -3440,20 +3474,14 @@ def main():
             application.add_handler(conv_handler)
             logger.info("✅ ConversationHandler added")
             
-            # ОСНОВНОЙ обработчик текстовых сообщений
+            # ОСНОВНОЙ обработчик текстовых сообщений (ТОЛЬКО ОДИН!)
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             logger.info("✅ MessageHandler for text added")
             
             application.add_handler(CallbackQueryHandler(button_handler))
             logger.info("✅ CallbackQueryHandler added")
             
-            # ✅ ВАЖНО: Добавляем обработчик для ввода ID администратора в ОТДЕЛЬНОЙ ГРУППЕ
-            # Это гарантирует, что он будет обрабатываться ДО основного обработчика
-            application.add_handler(MessageHandler(
-                filters.TEXT & ~filters.COMMAND, 
-                handle_admin_id_input
-            ), group=1)
-            logger.info("✅ MessageHandler for admin ID input added (group 1)")
+            # НЕ добавляем отдельный обработчик для admin ID - он теперь в handle_message
             
             # Настраиваем job queue
             try:
@@ -3462,10 +3490,10 @@ def main():
             except Exception as e:
                 logger.error(f"❌ Job queue setup failed: {e}")
             
-            # Запускаем бота в режиме polling с УВЕЛИЧЕННЫМИ ИНТЕРВАЛАМИ
-            logger.info("🤖 Bot starting in polling mode with optimized intervals...")
+            # ЗАПУСКАЕМ POLLING С ОПТИМИЗАЦИЕЙ ДЛЯ RENDER
+            logger.info("🤖 Bot starting in polling mode with Render optimization...")
             
-            # Проверяем токен бота синхронным способом
+            # Проверяем токен бота
             try:
                 import requests
                 bot_token = config.BOT_TOKEN
@@ -3482,21 +3510,22 @@ def main():
                 time.sleep(10)
                 continue
             
-            # Запускаем polling
+            # ЗАПУСК POLLING
             application.run_polling(
-                poll_interval=5.0,
-                timeout=25,
+                poll_interval=3.0,
+                timeout=20,
                 drop_pending_updates=True,
                 allowed_updates=['message', 'callback_query'],
-                close_loop=False  # Важно: не закрывать event loop
+                close_loop=False
             )
             
-            logger.info("🤖 Bot stopped - restarting...")
+            logger.info("🤖 Bot stopped normally - restarting...")
+            restart_count = 0  # Сбрасываем счетчик при нормальной остановке
             
         except Conflict as e:
-            logger.error(f"❌ CONFLICT ERROR: Another instance is running. {e}")
-            logger.info("🔄 Waiting 30 seconds before retry...")
-            time.sleep(30)
+            logger.warning(f"⚠️ CONFLICT DETECTED: {e}")
+            logger.info("🔄 Waiting 5 seconds before retry...")
+            time.sleep(5)
             
         except Exception as e:
             logger.error(f"❌ Bot crashed with error: {e}")
@@ -3505,13 +3534,15 @@ def main():
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
             
             # Увеличиваем время ожидания после каждого перезапуска
-            wait_time = min(10 * restart_count, 300)
+            wait_time = min(5 * restart_count, 30)
             logger.info(f"🔄 Restarting bot in {wait_time} seconds... (restart #{restart_count})")
             time.sleep(wait_time)
             
             # Принудительная очистка
             import gc
             gc.collect()
+
+    logger.error(f"❌ Maximum restart attempts ({max_restarts}) reached. Exiting.")
 
 if __name__ == "__main__":
     # ИСПРАВЛЕНИЕ: Запускаем главную функцию напрямую
