@@ -302,8 +302,8 @@ def get_main_keyboard(user_id):
             [KeyboardButton("📝 Записать клиента вручную")],
             [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
             [KeyboardButton("👑 Все записи"), KeyboardButton("📊 Записи сегодня")],
-            [KeyboardButton("📈 Статистика"), KeyboardButton("🗓️ График работы")],
-            [KeyboardButton("👥 Управление администраторами")]
+            [KeyboardButton("📅 Записи на неделю"), KeyboardButton("📈 Статистика")],
+            [KeyboardButton("🗓️ График работы"), KeyboardButton("👥 Управление администраторами")]
         ]
     else:
         # Клавиатура для обычного пользователя
@@ -364,12 +364,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений с кнопок"""
-    text = update.message.text
-    user_id = update.effective_user.id
-    
-    # Обновляем время последней активности пользователя
-    user = update.effective_user
-    db.add_or_update_user(user.id, user.username, user.first_name, user.last_name)
+    # ... существующий код ...
     
     if db.is_admin(user_id):
         # Обработка для администратора
@@ -383,6 +378,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_all_appointments(update, context)
         elif text == "📊 Записи сегодня":
             await show_today_appointments_visual(update, context)
+        elif text == "📅 Записи на неделю":  # ДОБАВЛЕННЫЙ ОБРАБОТЧИК
+            await show_week_appointments(update, context)
         elif text == "📈 Статистика":
             await show_statistics(update, context)
         elif text == "🗓️ График работы":
@@ -1370,6 +1367,281 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
             await update.callback_query.edit_message_text("❌ Ошибка при загрузке расписания")
         else:
             await update.message.reply_text("❌ Ошибка при загрузке расписания")
+
+async def show_week_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает выбор дней недели для просмотра записей"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        if update.callback_query:
+            await update.callback_query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        else:
+            await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        return
+    
+    # Создаем клавиатуру с днями недели (аналогично процессу записи)
+    keyboard = []
+    today = get_local_time().date()
+    current_time = get_local_time().time()
+    
+    # ПОКАЗЫВАЕМ 7 РАБОЧИХ ДНЕЙ ВПЕРЕД С УЧЕТОМ ТЕКУЩЕГО ВРЕМЕНИ
+    days_shown = 0
+    i = 0
+    
+    while days_shown < 7 and i < 30:  # Максимум 30 дней для поиска 7 рабочих дней
+        date = today + timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+        display_date = date.strftime("%d.%m.%Y")
+        weekday = date.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        
+        schedule = db.get_work_schedule(weekday)
+        if schedule and schedule[0][4]:  # Если рабочий день (is_working)
+            start_time, end_time = schedule[0][2], schedule[0][3]  # start_time и end_time
+            
+            # Проверяем, можно ли показывать этот день
+            if is_date_available_for_view(date, current_time, start_time, end_time, i):
+                # Получаем количество записей на этот день
+                appointments_count = get_appointments_count_for_date(date_str)
+                total_slots = len(db.generate_time_slots(start_time, end_time))
+                
+                keyboard.append([InlineKeyboardButton(
+                    f"📅 {day_name} {display_date} ({appointments_count}/{total_slots})", 
+                    callback_data=f"week_day_{date_str}"
+                )])
+                days_shown += 1
+        
+        i += 1
+    
+    if not keyboard:
+        keyboard = [[InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            query = update.callback_query
+            await query.edit_message_text("На этой неделе нет рабочих дней с записями 😔", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text("На этой неделе нет рабочих дней с записями 😔", reply_markup=reply_markup)
+        return
+    
+    keyboard.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = "📅 *Записи на неделю*\n\nВыберите день для просмотра записей:"
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def show_day_appointments_visual(update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str):
+    """Показывает расписание на выбранный день в визуальном формате"""
+    try:
+        user_id = update.effective_user.id
+        
+        if not db.is_admin(user_id):
+            if update.callback_query:
+                await update.callback_query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+            else:
+                await update.message.reply_text("❌ У вас нет доступа к этой функции")
+            return
+        
+        # Получаем записи на выбранную дату
+        all_appointments = db.get_all_appointments()
+        day_appointments = [appt for appt in all_appointments if appt[5] == date_str]
+        
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+        weekday = date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = date_obj.strftime("%d.%m.%Y")
+        
+        # Получаем график работы на выбранный день
+        work_schedule = db.get_work_schedule(weekday)
+        
+        if not work_schedule or not work_schedule[0][4]:  # is_working
+            keyboard = [[InlineKeyboardButton("🔙 Назад к неделе", callback_data="week_appointments")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            if update.callback_query:
+                query = update.callback_query
+                await query.edit_message_text(
+                    f"📅 {day_name} {display_date} - выходной день",
+                    reply_markup=reply_markup
+                )
+            else:
+                await update.message.reply_text(
+                    f"📅 {day_name} {display_date} - выходной день",
+                    reply_markup=reply_markup
+                )
+            return
+        
+        # Создаем список всех временных слотов
+        start_time = work_schedule[0][2]  # start_time
+        end_time = work_schedule[0][3]    # end_time
+        all_slots = db.generate_time_slots(start_time, end_time)
+        
+        # Создаем словарь занятых слотов
+        booked_slots = {}
+        for appt in day_appointments:
+            appt_id, user_name, username, phone, service, date, time = appt
+            
+            # Форматируем телефон для отображения
+            if phone.startswith('+7'):
+                formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
+            elif phone.startswith('8'):
+                formatted_phone = f"***{phone[-4:]}" if len(phone) >= 11 else phone
+            else:
+                formatted_phone = phone
+            
+            # Сокращаем имя для отображения
+            name_parts = user_name.split()
+            if len(name_parts) >= 2:
+                short_name = f"{name_parts[0]} {name_parts[1][0]}."
+            else:
+                short_name = user_name
+            
+            booked_slots[time] = {
+                'name': short_name,
+                'phone': formatted_phone,
+                'full_name': user_name,
+                'full_phone': phone,
+                'service': service,
+                'appt_id': appt_id
+            }
+        
+        # Формируем текст расписания
+        header = f"📅 *{day_name} {display_date}* | {len(day_appointments)}/{len(all_slots)} занято\n\n"
+        
+        schedule_text = ""
+        total_booked = 0
+
+        for slot in all_slots:
+            if slot in booked_slots:
+                client_info = booked_slots[slot]
+                # Экранируем специальные символы Markdown
+                safe_name = client_info['name'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
+                safe_phone = client_info['phone'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
+                schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name} {safe_phone}\n"
+                total_booked += 1
+            else:
+                schedule_text += f"⏰ *{slot}* ─── ✅ Свободно\n"
+
+        # Добавляем инструкцию по управлению
+        schedule_text += f"\n💡 Быстрые действия:\n"
+        schedule_text += f"• Нажмите '🔄 Обновить' для актуального расписания\n"
+        schedule_text += f"• Нажмите '📞 Все контакты' для просмотра всех номеров\n"
+        schedule_text += f"• Для отмены записи используйте кнопку '❌ Отменить запись' в главном меню"
+        
+        full_text = header + schedule_text
+        
+        # Создаем клавиатуру с быстрыми действиями
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data=f"refresh_day_{date_str}")],
+            [InlineKeyboardButton("📞 Все контакты", callback_data=f"day_contacts_{date_str}")],
+            [InlineKeyboardButton("🔙 Назад к неделе", callback_data="week_appointments")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            query = update.callback_query
+            try:
+                await query.edit_message_text(full_text, parse_mode='Markdown', reply_markup=reply_markup)
+            except BadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    # Игнорируем эту ошибку - сообщение уже актуально
+                    logger.debug("Message not modified in show_day_appointments_visual - ignoring")
+                else:
+                    raise
+        else:
+            await update.message.reply_text(full_text, parse_mode='Markdown', reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Ошибка в show_day_appointments_visual: {e}")
+        if update.callback_query:
+            await update.callback_query.edit_message_text("❌ Ошибка при загрузке расписания")
+        else:
+            await update.message.reply_text("❌ Ошибка при загрузке расписания")
+
+async def show_day_contacts(update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str):
+    """Показывает все контакты на выбранный день с полными номерами"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    # Получаем записи на выбранную дату
+    all_appointments = db.get_all_appointments()
+    day_appointments = [appt for appt in all_appointments if appt[5] == date_str]
+    
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+    weekday = date_obj.weekday()
+    day_name = config.WEEKDAYS[weekday]
+    display_date = date_obj.strftime("%d.%m.%Y")
+    
+    if not day_appointments:
+        text = f"📞 Контакты на {day_name} {display_date}\n\n📭 Нет записей на этот день"
+    else:
+        text = f"📞 Контакты на {day_name} {display_date}\n\n"
+        
+        for i, appt in enumerate(day_appointments, 1):
+            appt_id, user_name, username, phone, service, date, time = appt
+            text += f"{i}. ⏰ {time} - 👤 {user_name}\n"
+            text += f"   📞 {phone}\n"
+            text += f"   💇 {service}\n"
+            text += f"   🆔 #{appt_id}\n"
+            text += "   ──────────────────\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📅 Назад к расписанию", callback_data=f"week_day_{date_str}")],
+        [InlineKeyboardButton("🔙 Назад к неделе", callback_data="week_appointments")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            logger.debug("Message not modified in show_day_contacts - ignoring")
+        else:
+            raise
+
+
+def is_date_available_for_view(date, current_time, start_time, end_time, days_ahead):
+    """Проверяет, можно ли показывать день для просмотра записей"""
+    # Всегда показываем будущие дни
+    if days_ahead > 0:
+        return True
+    
+    # Для сегодняшнего дня проверяем, есть ли еще активные слоты
+    if days_ahead == 0:
+        start_dt = datetime.strptime(start_time, "%H:%M").time()
+        end_dt = datetime.strptime(end_time, "%H:%M").time()
+        
+        # Если текущее время позже времени окончания работы
+        if current_time >= end_dt:
+            return False
+        
+        return True
+    
+    return True
+
+
+def get_appointments_count_for_date(date_str):
+    """Получает количество записей на указанную дату"""
+    try:
+        all_appointments = db.get_all_appointments()
+        count = 0
+        for appt in all_appointments:
+            if appt[5] == date_str:  # appointment_date
+                count += 1
+        return count
+    except:
+        return 0
 
 # НОВАЯ ФУНКЦИЯ - ПОКАЗ ВСЕХ КОНТАКТОВ НА СЕГОДНЯ
 async def show_all_contacts_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2411,6 +2683,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_schedule_actions(update, context)
     elif query.data == "show_today_visual":
         await handle_schedule_actions(update, context)
+    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ЗАПИСЕЙ НА НЕДЕЛЮ
+    elif query.data == "week_appointments":
+        await show_week_appointments(update, context)
+    elif query.data.startswith("week_day_"):
+        date_str = query.data[9:]  # Убираем "week_day_"
+        await show_day_appointments_visual(update, context, date_str)
+    elif query.data.startswith("refresh_day_"):
+        date_str = query.data[12:]  # Убираем "refresh_day_"
+        await show_day_appointments_visual(update, context, date_str)
+    elif query.data.startswith("day_contacts_"):
+        date_str = query.data[13:]  # Убираем "day_contacts_"
+        await show_day_contacts(update, context, date_str)
     elif query.data.startswith("called_"):
         await called_confirmation(update, context)
     elif query.data == "confirm_cancel_slot":
