@@ -257,7 +257,7 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Глобальный обработчик ошибок"""
+    """Глобальный обработчик ошибок с улучшенной обработкой конфликтов"""
     error = context.error
     
     if isinstance(error, BadRequest):
@@ -272,11 +272,14 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Message to edit not found: {error}")
             return
     
-    # ДОБАВЛЯЕМ ОБРАБОТКУ CONFLICT ОШИБОК
+    # УЛУЧШЕННАЯ ОБРАБОТКА CONFLICT ОШИБОК
     if isinstance(error, Conflict):
-        logger.error(f"❌ CONFLICT: Another bot instance is running. Make sure only one instance is active.")
-        # Не останавливаем приложение, просто логируем и игнорируем
-        return
+        logger.error(f"❌ CONFLICT: Обнаружен другой запущенный экземпляр бота. Выполняем полную остановку...")
+        # Принудительная остановка вместо игнорирования
+        if 'application' in globals():
+            await application.stop()
+            await application.shutdown()
+        sys.exit(0)  # Завершаем процесс полностью
     
     logger.error(f"Exception while handling an update: {error}", exc_info=error)
 
@@ -2705,8 +2708,30 @@ def setup_job_queue(application: Application):
     job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
 
 def main():
-    """Главная функция с улучшенной обработкой ошибок"""
-    logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support...")
+    """Главная функция с улучшенной обработкой ошибок и защитой от конфликтов"""
+    logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support and CONFLICT PROTECTION...")
+    
+    # ПРЕДВАРИТЕЛЬНАЯ ОЧИСТКА WEBHOOK ДЛЯ ПРЕДОТВРАЩЕНИЯ КОНФЛИКТОВ
+    try:
+        import requests
+        bot_token = config.BOT_TOKEN
+        # Принудительно удаляем webhook
+        response = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
+            timeout=10
+        )
+        logger.info(f"✅ Webhook deletion response: {response.status_code}")
+        
+        # Сбрасываем updates
+        response = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/getUpdates",
+            json={"offset": -1},
+            timeout=10
+        )
+        logger.info("✅ Updates reset completed")
+        time.sleep(3)  # Даем время для очистки
+    except Exception as e:
+        logger.warning(f"⚠️ Webhook cleanup warning: {e}")
     
     # Устанавливаем обработчики сигналов ДО создания любых потоков
     signal.signal(signal.SIGINT, signal_handler)
@@ -2782,14 +2807,15 @@ def main():
             
             setup_job_queue(application)
             
-            # Запускаем бота в режиме polling с обработкой ошибок
-            logger.info("🤖 Bot starting in polling mode...")
+            # Запускаем бота в режиме polling с УВЕЛИЧЕННЫМИ ИНТЕРВАЛАМИ
+            logger.info("🤖 Bot starting in polling mode with optimized intervals...")
             
-            # ПРОСТОЙ ВЫЗОВ БЕЗ ПРОБЛЕМНЫХ ПАРАМЕТРОВ
+            # УВЕЛИЧЕННЫЕ ИНТЕРВАЛЫ ДЛЯ СНИЖЕНИЯ КОНФЛИКТОВ
             application.run_polling(
-                poll_interval=3.0,
-                timeout=20,
-                drop_pending_updates=True
+                poll_interval=5.0,  # Увеличили с 3.0 до 5.0
+                timeout=25,         # Увеличили таймаут
+                drop_pending_updates=True,
+                allowed_updates=['message', 'callback_query']
             )
             
             logger.info("🤖 Bot stopped - restarting...")
