@@ -2657,12 +2657,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_admin_start(update, context)
     elif query.data == "admin_remove":
         await remove_admin_start(update, context)
+    
+    # ИСПРАВЛЕННЫЕ ОБРАБОТЧИКИ - добавлено извлечение admin_id
     elif query.data.startswith("admin_remove_confirm_"):
-        admin_id = int(query.data.split("_")[3])
-        await remove_admin_confirm(update, context, admin_id)
+        try:
+            admin_id = int(query.data.split("_")[3])
+            await remove_admin_confirm(update, context, admin_id)
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
+            await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
+    
     elif query.data.startswith("admin_remove_final_"):
-        admin_id = int(query.data.split("_")[3])
-        await remove_admin_final(update, context, admin_id)
+        try:
+            admin_id = int(query.data.split("_")[3])
+            await remove_admin_final(update, context, admin_id)
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
+            await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
     
     # ... остальные существующие обработчики ...
     elif query.data.startswith("service_"):
@@ -2687,11 +2698,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("schedule_day_"):
         await schedule_day_selected(update, context)
 
-    # ДОБАВЛЯЕМ ОБРАБОТЧИК ДЛЯ НЕДЕЛЬНОГО ОТЧЕТА
-
+    # ДОБАВЛЕННЫЕ ОБРАБОТЧИКИ
     elif query.data == "weekly_report":
         await weekly_report(update, context)
-    elif query.data == "show_statistics":  # ДОБАВЛЕННЫЙ ОБРАБОТЧИК
+    elif query.data == "show_statistics":
         await show_statistics(update, context)
     elif query.data.startswith("schedule_working_"):
         await schedule_working_selected(update, context)
@@ -2703,12 +2713,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await schedule_end_selected(update, context)
     elif query.data == "manage_schedule":
         await manage_schedule(update, context)
-    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ КОНФЛИКТОВ ГРАФИКА
+    
+    # ОБРАБОТЧИКИ ДЛЯ КОНФЛИКТОВ ГРАФИКА
     elif query.data == "schedule_cancel_appointments":
         await handle_schedule_cancel_appointments(update, context)
     elif query.data == "schedule_cancel_changes":
         await handle_schedule_cancel_changes(update, context)
-    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ВИЗУАЛЬНОГО РАСПИСАНИЯ
+    
+    # ОБРАБОТЧИКИ ДЛЯ ВИЗУАЛЬНОГО РАСПИСАНИЯ
     elif query.data.startswith("call_"):
         await handle_schedule_actions(update, context)
     elif query.data.startswith("edit_"):
@@ -2721,7 +2733,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_schedule_actions(update, context)
     elif query.data == "show_today_visual":
         await handle_schedule_actions(update, context)
-    # НОВЫЕ ОБРАБОТЧИКИ ДЛЯ ЗАПИСЕЙ НА НЕДЕЛЮ
+    
+    # ОБРАБОТЧИКИ ДЛЯ ЗАПИСЕЙ НА НЕДЕЛЮ
     elif query.data == "week_appointments":
         await show_week_appointments(update, context)
     elif query.data.startswith("week_day_"):
