@@ -129,6 +129,87 @@ def deep_health():
     except Exception as e:
         return {"status": "degraded", "error": str(e)}, 500
 
+@web_app.route('/active')
+def active():
+    """Эндпоинт активности"""
+    return {"active": True, "timestamp": datetime.now().isoformat()}
+
+@web_app.route('/alive')
+def alive():
+    """Эндпоинт живости"""
+    return "ALIVE"
+
+@web_app.route('/ready')
+def ready():
+    """Эндпоинт готовности"""
+    return {"ready": True, "service": "barbershop-bot"}
+
+@web_app.route('/check')
+def check():
+    """Простой чек-эндпоинт"""
+    return "OK"
+
+@web_app.route('/monitor')
+def monitor():
+    """Эндпоинт мониторинга"""
+    return {
+        "status": "operational",
+        "timestamp": datetime.now().isoformat(),
+        "service": "barbershop-bot"
+    }
+
+
+# Обновите главную страницу чтобы показать все эндпоинты
+@web_app.route('/')
+def home():
+    """Главная страница веб-сервера"""
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Бот Парикмахерской</title>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 40px; text-align: center; }}
+            .status {{ color: green; font-weight: bold; }}
+            .container {{ max-width: 800px; margin: 0 auto; padding: 20px; }}
+            .endpoints {{ text-align: left; margin: 20px 0; }}
+            .endpoint {{ margin: 5px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 Бот Парикмахерской "Бархат"</h1>
+            <p>Статус: <span class="status">Активен ✅</span></p>
+            <p>Время сервера: {current_time}</p>
+            
+            div class="endpoints">
+                <h3>📡 Доступные эндпоинты:</h3>
+                <div class="endpoint"><a href="/health">/health</a> - Проверка здоровья</div>
+                <div class="endpoint"><a href="/deep-health">/deep-health</a> - Глубокая проверка</div>
+                <div class="endpoint"><a href="/ping">/ping</a> - Ping</div>
+                <div class="endpoint"><a href="/status">/status</a> - Статус</div>
+                <div class="endpoint"><a href="/keep-alive">/keep-alive</a> - Поддержание активности</div>
+                <div class="endpoint"><a href="/active">/active</a> - Активность</div>
+                <div class="endpoint"><a href="/alive">/alive</a> - Живость</div>
+                <div class="endpoint"><a href="/ready">/ready</a> - Готовность</div>
+                <div class="endpoint"><a href="/check">/check</a> - Проверка</div>
+                <div class="endpoint"><a href="/monitor">/monitor</a> - Мониторинг</div>
+            </div>
+
+            <div style="margin-top: 30px; padding: 20px; background: #f5f5f5; border-radius: 10px;">
+                <h3>📊 Статистика сервиса</h3>
+                <p>• Бот работает в режиме 24/7</p>
+                <p>• Автоматические напоминания клиентам</p>
+                <p>• Визуальное расписание для администраторов</p>
+                <p>• Система управления записями</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
 def run_web_server():
     """Запускает веб-сервер в отдельном потоке"""
     port = int(os.getenv('PORT', 5000))
@@ -140,51 +221,36 @@ def start_enhanced_self_ping():
     def enhanced_ping_loop():
         while True:
             try:
-                # Ждем 5 минут
-                time.sleep(300)
+                # УВЕЛИЧИМ ЧАСТОТУ: ждем 2 минуты вместо 5
+                time.sleep(120)
                 
                 # Пингуем сами себя
                 port = int(os.getenv('PORT', 5000))
                 try:
-                    # Попробуем использовать requests если установлен
-                    try:
-                        import requests
-                        local_ping = f"http://localhost:{port}/keep-alive"
-                        response = requests.get(local_ping, timeout=5)
-                        logger.info("✅ Internal self-ping successful (requests)")
-                    except ImportError:
-                        # Используем httpx как альтернативу
-                        local_ping = f"http://localhost:{port}/keep-alive"
-                        with httpx.Client(timeout=5) as client:
-                            response = client.get(local_ping)
-                        logger.info("✅ Internal self-ping successful (httpx)")
+                    import requests
+                    local_ping = f"http://localhost:{port}/keep-alive"
+                    response = requests.get(local_ping, timeout=5)
+                    logger.info("✅ Internal self-ping successful")
                 except Exception as e:
                     logger.warning(f"⚠️ Internal ping failed: {e}")
                 
-                # Пингуем внешние сервисы чтобы создать трафик
+                # Пингуем внешние сервисы чаще
                 external_urls = [
                     "https://www.google.com",
-                    "https://api.telegram.org",
+                    "https://api.telegram.org", 
                     "https://httpbin.org/get"
                 ]
                 
                 for url in external_urls:
                     try:
-                        # Используем тот же подход что и для внутреннего пинга
-                        try:
-                            import requests
-                            response = requests.get(url, timeout=10)
-                            logger.info(f"🌐 External ping to {url}: {response.status_code} (requests)")
-                        except ImportError:
-                            with httpx.Client(timeout=10) as client:
-                                response = client.get(url)
-                            logger.info(f"🌐 External ping to {url}: {response.status_code} (httpx)")
+                        response = requests.get(url, timeout=10)
+                        logger.info(f"🌐 External ping to {url}: {response.status_code}")
                     except Exception as e:
                         logger.warning(f"🌐 External ping failed to {url}: {e}")
-                
+                        
             except Exception as e:
                 logger.error(f"❌ Self-ping loop error: {e}")
-                time.sleep(60)  # Ждем минуту при ошибке
+                time.sleep(60)
     
     ping_thread = threading.Thread(target=enhanced_ping_loop, daemon=True)
     ping_thread.start()
@@ -2689,7 +2755,7 @@ def main():
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
                     CommandHandler("start", start)
                 ],
-                per_message=False  # ИСПРАВЛЕНО: вернули False
+                per_message=False
             )
             
             application.add_handler(CommandHandler("start", start))
@@ -2713,9 +2779,8 @@ def main():
                 drop_pending_updates=True
             )
             
-            # Если бот нормально остановился, выходим
-            logger.info("🤖 Bot stopped normally - no restart needed")
-            break
+            # УБИРАЕМ ВЫХОД ИЗ ЦИКЛА - ВСЕГДА ПЕРЕЗАПУСКАЕМСЯ
+            logger.info("🤖 Bot stopped - restarting...")
             
         except Exception as e:
             logger.error(f"❌ Bot crashed with error: {e}")
