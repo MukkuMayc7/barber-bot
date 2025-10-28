@@ -462,7 +462,7 @@ class Database:
         ''', (cutoff_date,))
         return cursor.fetchone()[0]
 
-        def cleanup_completed_appointments(self):
+    def cleanup_completed_appointments(self):
         """Очищает прошедшие записи"""
         cursor = self.conn.cursor()
         now = datetime.now()
