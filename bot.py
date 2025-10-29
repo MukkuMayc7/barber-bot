@@ -433,8 +433,8 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         await query.edit_message_text(
             f"🏠 *Главное меню {config.BARBERSHOP_NAME}*\n\nВыберите действие на клавиатуре ниже:",
-            parse_mode='Markdown'  # ← ЗДЕСЬ НЕ ХВАТАЕТ ЗАКРЫВАЮЩЕЙ СКОБКИ!
-        )
+            parse_mode='Markdown'
+        )  # ← ДОБАВЛЕНА ЗАКРЫВАЮЩАЯ СКОБКА!
     else:
         user_id = update.effective_user.id
         await update.message.reply_text(
