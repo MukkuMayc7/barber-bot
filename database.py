@@ -56,7 +56,8 @@ class Database:
                 appointment_date TEXT,
                 appointment_time TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                reminder_sent BOOLEAN DEFAULT FALSE
+                reminder_24h_sent BOOLEAN DEFAULT FALSE,
+                reminder_1h_sent BOOLEAN DEFAULT FALSE
             )
         ''')
         
@@ -378,25 +379,70 @@ class Database:
         ''')
         return cursor.fetchall()
 
-    def get_appointments_for_reminder(self):
-        """Получает записи для напоминания"""
+    def get_appointments_for_24h_reminder(self):
+        """Получает записи для 24-часового напоминания"""
         cursor = self.conn.cursor()
-        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-        
+    
+        # Текущая дата и время
+        now = datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        current_time = now.strftime("%H:%M")
+    
+        # Завтрашняя дата
+        tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+        # Ищем записи на завтра в то же время ±5 минут
         cursor.execute('''
             SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
             FROM appointments 
-            WHERE appointment_date = %s AND reminder_sent = FALSE
-        ''', (tomorrow,))
-        
+            WHERE appointment_date = %s 
+            AND appointment_time BETWEEN %s AND %s
+            AND reminder_24h_sent = FALSE
+            AND user_name != 'Администратор'
+        ''', (tomorrow, current_time, current_time))
+    
         return cursor.fetchall()
 
-    def mark_reminder_sent(self, appointment_id):
-        """Отмечает напоминание как отправленное"""
+    def get_appointments_for_1h_reminder(self):
+        """Получает записи для 1-часового напоминания"""
+        cursor = self.conn.cursor()
+    
+        # Текущая дата и время
+        now = datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        current_time = now.strftime("%H:%M")
+    
+        # Время через 1 час
+        one_hour_later = (now + timedelta(hours=1)).strftime("%H:%M")
+    
+        # Ищем записи на сегодня через 1 час ±5 минут
+        cursor.execute('''
+            SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
+            FROM appointments 
+            WHERE appointment_date = %s 
+            AND appointment_time BETWEEN %s AND %s
+            AND reminder_1h_sent = FALSE
+            AND user_name != 'Администратор'
+        ''', (current_date, one_hour_later, one_hour_later))
+    
+        return cursor.fetchall()
+
+    def mark_24h_reminder_sent(self, appointment_id):
+        """Отмечает 24-часовое напоминание как отправленное"""
         cursor = self.conn.cursor()
         cursor.execute('''
             UPDATE appointments 
-            SET reminder_sent = TRUE 
+            SET reminder_24h_sent = TRUE 
+            WHERE id = %s
+        ''', (appointment_id,))
+        self.conn.commit()
+
+    def mark_1h_reminder_sent(self, appointment_id):
+        """Отмечает 1-часовое напоминание как отправленное"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            UPDATE appointments 
+            SET reminder_1h_sent = TRUE 
             WHERE id = %s
         ''', (appointment_id,))
         self.conn.commit()
