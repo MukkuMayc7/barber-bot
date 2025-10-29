@@ -2079,16 +2079,23 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_admin_id'] = True
     logger.info(f"✅ awaiting_admin_id установлен в True для пользователя {user_id}")
     
+    # СОЗДАЕМ КЛАВИАТУРУ С КНОПКОЙ "НАЗАД"
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад", callback_data="manage_admins")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     try:
         await query.edit_message_text(
             "➕ *Добавление администратора*\n\n"
-            "Введите ID пользователя, которого хотите сделать администратором:\n\n"
+            "Введите ID пользователя:\n\n"
             "*Как получить ID пользователя?*\n"
             "1. Попросите пользователя написать боту @userinfobot\n"
             "2. Или перешлите любое сообщение от пользователя боту @userinfobot\n"
             "3. Бот покажет ID пользователя\n\n"
             "*Введите числовой ID:*",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=reply_markup  # ДОБАВЛЯЕМ КЛАВИАТУРУ
         )
         logger.info(f"✅ Сообщение для ввода ID отправлено пользователю {user_id}")
     except BadRequest as e:
