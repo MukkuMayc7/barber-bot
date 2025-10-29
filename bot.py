@@ -172,6 +172,11 @@ def run_web_server():
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     
+    # ДОБАВИТЬ ЭТОТ ЭНДПОИНТ ДЛЯ RENDER HEALTH CHECKS
+    @web_app.route('/healthcheck')
+    def healthcheck():
+        return "OK", 200
+    
     # Только Flask development server - Waitress вызывает конфликты
     logger.info("🚀 Using Flask development server")
     web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
