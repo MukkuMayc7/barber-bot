@@ -23,7 +23,7 @@ class Database:
                 pass
         self.conn = self.get_connection()
         self.create_tables()
-        self.update_database_structure()  # ← ДОБАВИТЬ ЭТУ СТРОКУ
+        self.update_database_structure()
         self.create_admin_tables()
         self.setup_default_notifications()
         self.setup_default_schedule()
@@ -35,10 +35,10 @@ class Database:
                 self.database_url = self.database_url.replace('postgres://', 'postgresql://')
             
             conn = psycopg.connect(self.database_url)
-            logger.info("Успешное подключение к PostgreSQL")
+            logger.info("✅ Успешное подключение к PostgreSQL")
             return conn
         except Exception as e:
-            logger.error(f"Ошибка подключения к PostgreSQL: {e}")
+            logger.error(f"❌ Ошибка подключения к PostgreSQL: {e}")
             raise
 
     def create_tables(self):
@@ -117,35 +117,92 @@ class Database:
         cursor = self.conn.cursor()
         
         try:
-            # Проверяем существование колонок и добавляем их если нужно
+            # Проверяем существование колонок по одной и добавляем если нужно
             cursor.execute("""
-                DO $$ 
-                BEGIN
-                    -- Добавляем reminder_24h_sent если не существует
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                                  WHERE table_name='appointments' AND column_name='reminder_24h_sent') THEN
-                        ALTER TABLE appointments ADD COLUMN reminder_24h_sent BOOLEAN DEFAULT FALSE;
-                    END IF;
-                    
-                    -- Добавляем reminder_1h_sent если не существует
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                                  WHERE table_name='appointments' AND column_name='reminder_1h_sent') THEN
-                        ALTER TABLE appointments ADD COLUMN reminder_1h_sent BOOLEAN DEFAULT FALSE;
-                    END IF;
-                    
-                    -- Переименовываем старую колонку если существует
-                    IF EXISTS (SELECT 1 FROM information_schema.columns 
-                              WHERE table_name='appointments' AND column_name='reminder_sent') THEN
-                        ALTER TABLE appointments RENAME COLUMN reminder_sent TO reminder_24h_sent;
-                    END IF;
-                END $$;
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'appointments' AND column_name = 'reminder_24h_sent'
             """)
+            if not cursor.fetchone():
+                cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_24h_sent BOOLEAN DEFAULT FALSE')
+                logger.info("✅ Добавлена колонка reminder_24h_sent")
+            
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'appointments' AND column_name = 'reminder_1h_sent'
+            """)
+            if not cursor.fetchone():
+                cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_1h_sent BOOLEAN DEFAULT FALSE')
+                logger.info("✅ Добавлена колонка reminder_1h_sent")
+            
+            # Проверяем есть ли старая колонка reminder_sent и переименовываем если нужно
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'appointments' AND column_name = 'reminder_sent'
+            """)
+            if cursor.fetchone():
+                # Проверяем что reminder_24h_sent еще не существует чтобы избежать конфликта
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'appointments' AND column_name = 'reminder_24h_sent'
+                """)
+                if not cursor.fetchone():
+                    cursor.execute('ALTER TABLE appointments RENAME COLUMN reminder_sent TO reminder_24h_sent')
+                    logger.info("✅ Переименована колонка reminder_sent в reminder_24h_sent")
+                else:
+                    # Если обе колонки существуют, удаляем старую
+                    cursor.execute('ALTER TABLE appointments DROP COLUMN reminder_sent')
+                    logger.info("✅ Удалена устаревшая колонка reminder_sent")
             
             self.conn.commit()
             logger.info("✅ Структура базы данных успешно обновлена для новых напоминаний")
             
         except Exception as e:
             logger.error(f"❌ Ошибка при обновлении структуры БД: {e}")
+            self.conn.rollback()
+            # Пытаемся добавить колонки по отдельности если основной запрос не сработал
+            self.add_columns_individually()
+
+    def add_columns_individually(self):
+        """Добавляет недостающие колонки по отдельности (резервный метод)"""
+        cursor = self.conn.cursor()
+        
+        try:
+            # Пробуем добавить reminder_24h_sent
+            try:
+                cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_24h_sent BOOLEAN DEFAULT FALSE')
+                logger.info("✅ Колонка reminder_24h_sent добавлена (индивидуально)")
+            except Exception as e:
+                logger.info(f"ℹ️ Колонка reminder_24h_sent уже существует: {e}")
+            
+            # Пробуем добавить reminder_1h_sent
+            try:
+                cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_1h_sent BOOLEAN DEFAULT FALSE')
+                logger.info("✅ Колонка reminder_1h_sent добавлена (индивидуально)")
+            except Exception as e:
+                logger.info(f"ℹ️ Колонка reminder_1h_sent уже существует: {e}")
+            
+            # Пробуем удалить старую колонку если она мешает
+            try:
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'appointments' AND column_name = 'reminder_sent'
+                """)
+                if cursor.fetchone():
+                    cursor.execute('ALTER TABLE appointments DROP COLUMN reminder_sent')
+                    logger.info("✅ Устаревшая колонка reminder_sent удалена")
+            except Exception as e:
+                logger.info(f"ℹ️ Не удалось удалить reminder_sent: {e}")
+            
+            self.conn.commit()
+            logger.info("✅ Резервное обновление структуры БД завершено")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка в резервном обновлении БД: {e}")
             self.conn.rollback()
 
     def create_admin_tables(self):
@@ -419,49 +476,57 @@ class Database:
         """Получает записи для 24-часового напоминания"""
         cursor = self.conn.cursor()
         
-        # Текущая дата и время
-        now = datetime.now()
-        current_date = now.strftime("%Y-%m-%d")
-        current_time = now.strftime("%H:%M")
-        
-        # Завтрашняя дата
-        tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-        
-        # Ищем записи на завтра в то же время ±5 минут
-        cursor.execute('''
-            SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
-            FROM appointments 
-            WHERE appointment_date = %s 
-            AND appointment_time BETWEEN %s AND %s
-            AND reminder_24h_sent = FALSE
-            AND user_name != 'Администратор'
-        ''', (tomorrow, current_time, current_time))
-        
-        return cursor.fetchall()
+        try:
+            # Текущая дата и время
+            now = datetime.now()
+            current_date = now.strftime("%Y-%m-%d")
+            current_time = now.strftime("%H:%M")
+            
+            # Завтрашняя дата
+            tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+            
+            # Ищем записи на завтра в то же время
+            cursor.execute('''
+                SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
+                FROM appointments 
+                WHERE appointment_date = %s 
+                AND appointment_time = %s
+                AND reminder_24h_sent = FALSE
+                AND user_name != 'Администратор'
+            ''', (tomorrow, current_time))
+            
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении записей для 24h напоминания: {e}")
+            return []
 
     def get_appointments_for_1h_reminder(self):
         """Получает записи для 1-часового напоминания"""
         cursor = self.conn.cursor()
         
-        # Текущая дата и время
-        now = datetime.now()
-        current_date = now.strftime("%Y-%m-%d")
-        current_time = now.strftime("%H:%M")
-        
-        # Время через 1 час
-        one_hour_later = (now + timedelta(hours=1)).strftime("%H:%M")
-        
-        # Ищем записи на сегодня через 1 час ±5 минут
-        cursor.execute('''
-            SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
-            FROM appointments 
-            WHERE appointment_date = %s 
-            AND appointment_time BETWEEN %s AND %s
-            AND reminder_1h_sent = FALSE
-            AND user_name != 'Администратор'
-        ''', (current_date, one_hour_later, one_hour_later))
-        
-        return cursor.fetchall()
+        try:
+            # Текущая дата и время
+            now = datetime.now()
+            current_date = now.strftime("%Y-%m-%d")
+            
+            # Время через 1 час
+            one_hour_later_dt = now + timedelta(hours=1)
+            one_hour_later = one_hour_later_dt.strftime("%H:%M")
+            
+            # Ищем записи на сегодня через 1 час
+            cursor.execute('''
+                SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
+                FROM appointments 
+                WHERE appointment_date = %s 
+                AND appointment_time = %s
+                AND reminder_1h_sent = FALSE
+                AND user_name != 'Администратор'
+            ''', (current_date, one_hour_later))
+            
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении записей для 1h напоминания: {e}")
+            return []
 
     def mark_24h_reminder_sent(self, appointment_id):
         """Отмечает 24-часовое напоминание как отправленное"""

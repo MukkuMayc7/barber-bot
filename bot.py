@@ -2695,6 +2695,14 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
     try:
         logger.info("🔄 Запуск 24-часовых напоминаний...")
         
+        # Очищаем прошедшие записи перед отправкой
+        try:
+            cleanup_result = db.cleanup_completed_appointments()
+            if cleanup_result['total_deleted'] > 0:
+                logger.info(f"✅ Автоочистка перед 24h напоминаниями: удалено {cleanup_result['total_deleted']} записей")
+        except Exception as e:
+            logger.error(f"⚠️ Ошибка при очистке перед 24h напоминаниями: {e}")
+        
         appointments = db.get_appointments_for_24h_reminder()
         
         if not appointments:
@@ -2702,46 +2710,51 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
             return
         
         sent_count = 0
+        error_count = 0
+        
         for appointment in appointments:
-            appt_id, user_id, user_name, phone, service, date, time = appointment
-            
-            # Пропускаем ручные записи администратора
-            if user_name == "Администратор":
-                continue
-                
-            # Форматируем дату и время
-            selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
-            weekday = selected_date_obj.weekday()
-            day_name = config.WEEKDAYS[weekday]
-            display_date = selected_date_obj.strftime("%d.%m.%Y")
-            
-            text = (
-                f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
-                f"Напоминаем, что завтра у вас запись:\n\n"
-                f"💇 Услуга: {service}\n"
-                f"📅 Дата: {day_name} {display_date}\n"
-                f"⏰ Время: {time}\n\n"
-                f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
-                f"📞 *Телефон:* +79178766645\n\n"
-                f"Ждём вас в парикмахерской! 🏃‍♂️"
-            )
-            
             try:
+                appt_id, user_id, user_name, phone, service, date, time = appointment
+                
+                # Пропускаем ручные записи администратора
+                if user_name == "Администратор":
+                    db.mark_24h_reminder_sent(appt_id)  # Помечаем чтобы не пытаться снова
+                    continue
+                    
+                # Форматируем дату и время
+                selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+                weekday = selected_date_obj.weekday()
+                day_name = config.WEEKDAYS[weekday]
+                display_date = selected_date_obj.strftime("%d.%m.%Y")
+                
+                text = (
+                    f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
+                    f"Напоминаем, что завтра у вас запись:\n\n"
+                    f"💇 Услуга: {service}\n"
+                    f"📅 Дата: {day_name} {display_date}\n"
+                    f"⏰ Время: {time}\n\n"
+                    f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
+                    f"📞 *Телефон:* +79178766645\n\n"
+                    f"Ждём вас в парикмахерской! 🏃‍♂️"
+                )
+                
                 await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
                 db.mark_24h_reminder_sent(appt_id)
                 sent_count += 1
                 logger.info(f"✅ 24h напоминание отправлено пользователю {user_id} на {date} {time}")
+                
             except BadRequest as e:
                 if "chat not found" in str(e).lower():
                     logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
-                    # Помечаем как отправленное чтобы не пытаться снова
-                    db.mark_24h_reminder_sent(appt_id)
+                    db.mark_24h_reminder_sent(appt_id)  # Помечаем как отправленное
                 else:
                     logger.error(f"❌ BadRequest при отправке 24h напоминания пользователю {user_id}: {e}")
+                    error_count += 1
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки 24h напоминания пользователю {user_id}: {e}")
+                error_count += 1
         
-        logger.info(f"📨 Отправлено 24-часовых напоминаний: {sent_count}/{len(appointments)}")
+        logger.info(f"📨 24h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments)}")
             
     except Exception as e:
         logger.error(f"❌ Критическая ошибка в send_24h_reminders: {e}")
@@ -2758,46 +2771,51 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
             return
         
         sent_count = 0
+        error_count = 0
+        
         for appointment in appointments:
-            appt_id, user_id, user_name, phone, service, date, time = appointment
-            
-            # Пропускаем ручные записи администратора
-            if user_name == "Администратор":
-                continue
-                
-            # Форматируем дату и время
-            selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
-            weekday = selected_date_obj.weekday()
-            day_name = config.WEEKDAYS[weekday]
-            display_date = selected_date_obj.strftime("%d.%m.%Y")
-            
-            text = (
-                f"⏰ *Скоро встреча в {config.BARBERSHOP_NAME}!*\n\n"
-                f"Напоминаем, что через 1 час у вас запись:\n\n"
-                f"💇 Услуга: {service}\n"
-                f"📅 Дата: {day_name} {display_date}\n"
-                f"⏰ Время: {time}\n\n"
-                f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
-                f"📞 *Телефон:* +79178766645\n\n"
-                f"*Не опаздывайте!* 🏃‍♂️"
-            )
-            
             try:
+                appt_id, user_id, user_name, phone, service, date, time = appointment
+                
+                # Пропускаем ручные записи администратора
+                if user_name == "Администратор":
+                    db.mark_1h_reminder_sent(appt_id)  # Помечаем чтобы не пытаться снова
+                    continue
+                    
+                # Форматируем дату и время
+                selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+                weekday = selected_date_obj.weekday()
+                day_name = config.WEEKDAYS[weekday]
+                display_date = selected_date_obj.strftime("%d.%m.%Y")
+                
+                text = (
+                    f"⏰ *Скоро встреча в {config.BARBERSHOP_NAME}!*\n\n"
+                    f"Напоминаем, что через 1 час у вас запись:\n\n"
+                    f"💇 Услуга: {service}\n"
+                    f"📅 Дата: {day_name} {display_date}\n"
+                    f"⏰ Время: {time}\n\n"
+                    f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
+                    f"📞 *Телефон:* +79178766645\n\n"
+                    f"*Не опаздывайте!* 🏃‍♂️"
+                )
+                
                 await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
                 db.mark_1h_reminder_sent(appt_id)
                 sent_count += 1
                 logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} на {date} {time}")
+                
             except BadRequest as e:
                 if "chat not found" in str(e).lower():
                     logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
-                    # Помечаем как отправленное чтобы не пытаться снова
-                    db.mark_1h_reminder_sent(appt_id)
+                    db.mark_1h_reminder_sent(appt_id)  # Помечаем как отправленное
                 else:
                     logger.error(f"❌ BadRequest при отправке 1h напоминания пользователю {user_id}: {e}")
+                    error_count += 1
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки 1h напоминания пользователю {user_id}: {e}")
+                error_count += 1
         
-        logger.info(f"📨 Отправлено 1-часовых напоминаний: {sent_count}/{len(appointments)}")
+        logger.info(f"📨 1h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments)}")
             
     except Exception as e:
         logger.error(f"❌ Критическая ошибка в send_1h_reminders: {e}")
@@ -3313,6 +3331,12 @@ async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"✅ Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
     except Exception as e:
         logger.error(f"❌ Ошибка в periodic_cleanup: {e}")
+        # Пытаемся восстановить соединение с БД
+        try:
+            db.reconnect()
+            logger.info("✅ Соединение с БД восстановлено")
+        except Exception as reconnect_error:
+            logger.error(f"❌ Не удалось восстановить соединение с БД: {reconnect_error}")
 
 async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная очистка старых данных по срокам 7/40 дней"""
