@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class Database:
     def __init__(self):
         self.database_url = config.DATABASE_URL
-        self.reconnect()  # Вместо прямого присвоения self.conn
+        self.reconnect()
     
     def reconnect(self):
         """Переподключается к базе данных"""
@@ -23,6 +23,7 @@ class Database:
                 pass
         self.conn = self.get_connection()
         self.create_tables()
+        self.update_database_structure()  # ← ДОБАВИТЬ ЭТУ СТРОКУ
         self.create_admin_tables()
         self.setup_default_notifications()
         self.setup_default_schedule()
@@ -41,10 +42,10 @@ class Database:
             raise
 
     def create_tables(self):
-        """Создает все необходимые таблицы"""
+        """Создает все необходимые таблицы с новой структурой"""
         cursor = self.conn.cursor()
         
-        # Таблица appointments
+        # Таблица appointments - ОБНОВЛЕННАЯ ВЕРСИЯ
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS appointments (
                 id SERIAL PRIMARY KEY,
@@ -109,7 +110,43 @@ class Database:
         ''')
         
         self.conn.commit()
-        logger.info("Таблицы успешно созданы/проверены")
+        logger.info("✅ Таблицы успешно созданы/проверены с новой структурой")
+
+    def update_database_structure(self):
+        """Обновляет структуру базы данных для новых функций"""
+        cursor = self.conn.cursor()
+        
+        try:
+            # Проверяем существование колонок и добавляем их если нужно
+            cursor.execute("""
+                DO $$ 
+                BEGIN
+                    -- Добавляем reminder_24h_sent если не существует
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='appointments' AND column_name='reminder_24h_sent') THEN
+                        ALTER TABLE appointments ADD COLUMN reminder_24h_sent BOOLEAN DEFAULT FALSE;
+                    END IF;
+                    
+                    -- Добавляем reminder_1h_sent если не существует
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='appointments' AND column_name='reminder_1h_sent') THEN
+                        ALTER TABLE appointments ADD COLUMN reminder_1h_sent BOOLEAN DEFAULT FALSE;
+                    END IF;
+                    
+                    -- Переименовываем старую колонку если существует
+                    IF EXISTS (SELECT 1 FROM information_schema.columns 
+                              WHERE table_name='appointments' AND column_name='reminder_sent') THEN
+                        ALTER TABLE appointments RENAME COLUMN reminder_sent TO reminder_24h_sent;
+                    END IF;
+                END $$;
+            """)
+            
+            self.conn.commit()
+            logger.info("✅ Структура базы данных успешно обновлена для новых напоминаний")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при обновлении структуры БД: {e}")
+            self.conn.rollback()
 
     def create_admin_tables(self):
         """Создает таблицу для администраторов"""
@@ -135,7 +172,7 @@ class Database:
             ''', (admin_id, 'system', 'Система', 'Администратор', 0))
         
         self.conn.commit()
-        logger.info("Таблица администраторов создана/проверена")
+        logger.info("✅ Таблица администраторов создана/проверена")
 
     def setup_default_notifications(self):
         """Настраивает уведомления по умолчанию для администраторов"""
@@ -147,7 +184,7 @@ class Database:
                 ON CONFLICT (admin_id) DO NOTHING
             ''', (admin_id, admin_id))
         self.conn.commit()
-        logger.info("Настроены уведомления по умолчанию для администраторов")
+        logger.info("✅ Настроены уведомления по умолчанию для администраторов")
 
     def setup_default_schedule(self):
         """Устанавливает график работы по умолчанию"""
@@ -178,9 +215,9 @@ class Database:
                 ''', (weekday, start_time, end_time, is_working))
             
             self.conn.commit()
-            logger.info("Установлен график работы по умолчанию")
+            logger.info("✅ Установлен график работы по умолчанию")
         else:
-            logger.info(f"В таблице work_schedule уже есть {count} записей")
+            logger.info(f"ℹ️ В таблице work_schedule уже есть {count} записей")
 
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
         """Добавляет новую запись"""
@@ -204,7 +241,7 @@ class Database:
         
         appointment_id = cursor.fetchone()[0]
         
-        # Обновляем расписание (ИСПРАВЛЕННЫЙ КОД)
+        # Обновляем расписание
         cursor.execute('''
             INSERT INTO schedule (date, time, available)
             VALUES (%s, %s, FALSE)
@@ -285,7 +322,6 @@ class Database:
         booked_times = [row[0] for row in cursor.fetchall()]
         
         # Получаем график работы
-        # ИСПРАВЛЕНО: правильное определение дня недели
         date_obj = datetime.strptime(date, "%Y-%m-%d").date()
         weekday = date_obj.weekday()
         cursor.execute('''
@@ -328,7 +364,7 @@ class Database:
         ''', (weekday, start_time, end_time, is_working))
         
         self.conn.commit()
-        logger.info(f"Установлен график для дня {weekday}: {start_time}-{end_time}, рабочий: {is_working}")
+        logger.info(f"✅ Установлен график для дня {weekday}: {start_time}-{end_time}, рабочий: {is_working}")
 
     def get_work_schedule(self, weekday=None):
         """Получает график работы"""
@@ -382,15 +418,15 @@ class Database:
     def get_appointments_for_24h_reminder(self):
         """Получает записи для 24-часового напоминания"""
         cursor = self.conn.cursor()
-    
+        
         # Текущая дата и время
         now = datetime.now()
         current_date = now.strftime("%Y-%m-%d")
         current_time = now.strftime("%H:%M")
-    
+        
         # Завтрашняя дата
         tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-    
+        
         # Ищем записи на завтра в то же время ±5 минут
         cursor.execute('''
             SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
@@ -400,21 +436,21 @@ class Database:
             AND reminder_24h_sent = FALSE
             AND user_name != 'Администратор'
         ''', (tomorrow, current_time, current_time))
-    
+        
         return cursor.fetchall()
 
     def get_appointments_for_1h_reminder(self):
         """Получает записи для 1-часового напоминания"""
         cursor = self.conn.cursor()
-    
+        
         # Текущая дата и время
         now = datetime.now()
         current_date = now.strftime("%Y-%m-%d")
         current_time = now.strftime("%H:%M")
-    
+        
         # Время через 1 час
         one_hour_later = (now + timedelta(hours=1)).strftime("%H:%M")
-    
+        
         # Ищем записи на сегодня через 1 час ±5 минут
         cursor.execute('''
             SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
@@ -424,7 +460,7 @@ class Database:
             AND reminder_1h_sent = FALSE
             AND user_name != 'Администратор'
         ''', (current_date, one_hour_later, one_hour_later))
-    
+        
         return cursor.fetchall()
 
     def mark_24h_reminder_sent(self, appointment_id):
@@ -446,20 +482,6 @@ class Database:
             WHERE id = %s
         ''', (appointment_id,))
         self.conn.commit()
-
-    def get_today_appointments(self):
-        """Получает записи на сегодня"""
-        cursor = self.conn.cursor()
-        today = datetime.now().strftime("%Y-%m-%d")
-        
-        cursor.execute('''
-            SELECT user_name, phone, service, appointment_time 
-            FROM appointments 
-            WHERE appointment_date = %s
-            ORDER BY appointment_time
-        ''', (today,))
-        
-        return cursor.fetchall()
 
     def set_notification_chat(self, admin_id, chat_id):
         """Устанавливает чат для уведомлений"""
@@ -548,7 +570,7 @@ class Database:
         total_deleted = deleted_past_dates + deleted_today
         
         if total_deleted > 0:
-            logger.info(f"Автоочистка: удалено {total_deleted} прошедших записей")
+            logger.info(f"✅ Автоочистка: удалено {total_deleted} прошедших записей")
         
         return {
             'deleted_past_dates': deleted_past_dates,
@@ -588,7 +610,7 @@ class Database:
         
         self.conn.commit()
         
-        logger.info(f"🚮 Очистка БД: удалено {deleted_appointments} записей (>7 дней), {deleted_users} пользователей (>40 дней неактивности)")
+        logger.info(f"✅ Очистка БД: удалено {deleted_appointments} записей (>7 дней), {deleted_users} пользователей (>40 дней неактивности)")
         
         return {
             'deleted_appointments': deleted_appointments,
@@ -685,7 +707,7 @@ class Database:
             # Определяем день недели записи в Python
             try:
                 appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-                appointment_weekday = appointment_date.weekday()  # Python weekday: понедельник=0, воскресенье=6
+                appointment_weekday = appointment_date.weekday()
             except ValueError:
                 logger.error(f"Неверный формат даты в записи {appt_id}: {date}")
                 continue
@@ -735,8 +757,6 @@ class Database:
         self.conn.commit()
         logger.info(f"Всего отменено записей: {len(canceled_appointments)}")
         return canceled_appointments
-
-    # ИСПРАВЛЕННЫЕ МЕТОДЫ ДЛЯ УПРАВЛЕНИЯ АДМИНИСТРАТОРАМИ
 
     def is_admin(self, user_id):
         """Проверяет, является ли пользователь администратором"""

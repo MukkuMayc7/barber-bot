@@ -2693,10 +2693,7 @@ async def handle_schedule_cancel_appointments(update: Update, context: ContextTy
 async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Отправка уведомлений за 24 часа до записи"""
     try:
-        # Очищаем прошедшие записи перед отправкой
-        cleanup_result = db.cleanup_completed_appointments()
-        if cleanup_result['total_deleted'] > 0:
-            logger.info(f"Автоочистка перед 24h напоминаниями: удалено {cleanup_result['total_deleted']} записей")
+        logger.info("🔄 Запуск 24-часовых напоминаний...")
         
         appointments = db.get_appointments_for_24h_reminder()
         
@@ -2737,6 +2734,8 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
             except BadRequest as e:
                 if "chat not found" in str(e).lower():
                     logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
+                    # Помечаем как отправленное чтобы не пытаться снова
+                    db.mark_24h_reminder_sent(appt_id)
                 else:
                     logger.error(f"❌ BadRequest при отправке 24h напоминания пользователю {user_id}: {e}")
             except Exception as e:
@@ -2750,6 +2749,8 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
 async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Отправка уведомлений за 1 час до записи"""
     try:
+        logger.info("🔄 Запуск 1-часовых напоминаний...")
+        
         appointments = db.get_appointments_for_1h_reminder()
         
         if not appointments:
@@ -2789,6 +2790,8 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
             except BadRequest as e:
                 if "chat not found" in str(e).lower():
                     logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
+                    # Помечаем как отправленное чтобы не пытаться снова
+                    db.mark_1h_reminder_sent(appt_id)
                 else:
                     logger.error(f"❌ BadRequest при отправке 1h напоминания пользователю {user_id}: {e}")
             except Exception as e:
@@ -3303,10 +3306,13 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
 
 async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
     """Периодическая очистка прошедших записей (каждые 30 минут)"""
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+    try:
+        cleanup_result = db.cleanup_completed_appointments()
+        
+        if cleanup_result['total_deleted'] > 0:
+            logger.info(f"✅ Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в periodic_cleanup: {e}")
 
 async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная очистка старых данных по срокам 7/40 дней"""
