@@ -1380,7 +1380,7 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
             await update.message.reply_text(full_text, parse_mode='Markdown', reply_markup=reply_markup)
             
     except Exception as e:
-        logger.error(f"Ошибка в show_today_appointments_visual: {e}")
+        logger.error(f"❌ Ошибка в show_today_appointments_visual: {e}")
         if update.callback_query:
             await update.callback_query.edit_message_text("❌ Ошибка при загрузке расписания")
         else:

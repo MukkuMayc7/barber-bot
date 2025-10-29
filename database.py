@@ -472,6 +472,20 @@ class Database:
         ''')
         return cursor.fetchall()
 
+    def get_today_appointments(self):
+    """Получает записи на сегодня"""
+    cursor = self.conn.cursor()
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    cursor.execute('''
+        SELECT user_name, phone, service, appointment_time 
+        FROM appointments 
+        WHERE appointment_date = %s
+        ORDER BY appointment_time
+    ''', (today,))
+    
+    return cursor.fetchall()
+
     def get_appointments_for_24h_reminder(self):
         """Получает записи для 24-часового напоминания"""
         cursor = self.conn.cursor()
