@@ -172,14 +172,19 @@ def run_web_server():
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     
-    # ДОБАВИТЬ ЭТОТ ЭНДПОИНТ ДЛЯ RENDER HEALTH CHECKS
+    # ДОБАВЛЯЕМ HEALTHCHECK ДЛЯ RENDER
     @web_app.route('/healthcheck')
     def healthcheck():
         return "OK", 200
     
-    # Только Flask development server - Waitress вызывает конфликты
     logger.info("🚀 Using Flask development server")
-    web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+    
+    try:
+        web_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+        logger.info("✅ Web server started successfully")
+    except Exception as e:
+        logger.error(f"❌ Web server failed to start: {e}")
+        raise
 
 def start_enhanced_self_ping():
     """Улучшенная система keep-alive для Render"""
@@ -3481,13 +3486,27 @@ def main():
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     logger.info("🌐 Web server thread started")
-    
+
     # Запускаем улучшенный self-ping сервис
     start_enhanced_self_ping()
     logger.info("🔁 Enhanced self-ping service started")
+
+    # ДАЕМ ВЕБ-СЕРВЕРУ ВРЕМЯ НА ЗАПУСК И ПРОВЕРЯЕМ ЕГО
+    time.sleep(3)
     
-    # Даем веб-серверу время на запуск
-    time.sleep(5)
+    # ПРОВЕРКА ЧТО ВЕБ-СЕРВЕР ЗАПУСТИЛСЯ
+    try:
+        port = int(os.getenv('PORT', 10000))
+        import requests
+        health_url = f"http://localhost:{port}/healthcheck"
+        response = requests.get(health_url, timeout=5)
+        if response.status_code == 200:
+            logger.info(f"✅ Web server confirmed running on port {port}")
+        else:
+            logger.warning(f"⚠️ Web server responded with status: {response.status_code}")
+    except Exception as e:
+        logger.error(f"❌ Web server health check failed: {e}")
+        # НЕ завершаем работу - возможно сервер запустится позже
     
     # Создаем и настраиваем бота с обработкой ошибок
     restart_count = 0
@@ -3564,8 +3583,6 @@ def main():
             
             application.add_handler(CallbackQueryHandler(button_handler))
             logger.info("✅ CallbackQueryHandler added")
-            
-            # НЕ добавляем отдельный обработчик для admin ID - он теперь в handle_message
             
             # Настраиваем job queue
             try:
