@@ -3143,19 +3143,18 @@ def normalize_phone(phone):
     else:
         return phone
 
-async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка напоминаний клиентам"""
-    # Сначала очищаем прошедшие записи
+async def send_reminders_24h(context: ContextTypes.DEFAULT_TYPE):
+    """Отправка напоминаний за 24 часа до записи"""
     cleanup_result = db.cleanup_completed_appointments()
     
     if cleanup_result['total_deleted'] > 0:
         logger.info(f"Автоочистка перед напоминаниями: удалено {cleanup_result['total_deleted']} записей")
     
-    # Затем отправляем напоминания
-    appointments = db.get_appointments_for_reminder()
+    # Получаем записи, которые будут через 24 часа
+    appointments = db.get_appointments_for_24h_reminder()
     
     if not appointments:
-        logger.info("Нет записей для напоминания")
+        logger.info("Нет записей для напоминания за 24 часа")
         return
     
     for appointment in appointments:
@@ -3176,20 +3175,69 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
             f"💇 Услуга: {service}\n"
             f"📅 Дата: {day_name} {display_date}\n"
             f"⏰ Время: {time}\n\n"
+            f"*До вашей записи осталось 24 часа!*\n"
             "Ждём вас в парикмахерской! 🏃‍♂️"
         )
         
         try:
             await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
-            db.mark_reminder_sent(appt_id)
-            logger.info(f"Напоминание отправлено пользователю {user_id}")
+            db.mark_24h_reminder_sent(appt_id)
+            logger.info(f"Напоминание за 24 часа отправлено пользователю {user_id}")
         except BadRequest as e:
             if "chat not found" in str(e).lower():
-                logger.warning(f"Chat not found for user {user_id}, skipping reminder")
+                logger.warning(f"Chat not found for user {user_id}, skipping 24h reminder")
             else:
-                logger.error(f"BadRequest при отправке напоминания пользователю {user_id}: {e}")
+                logger.error(f"BadRequest при отправке напоминания за 24 часа пользователю {user_id}: {e}")
         except Exception as e:
-            logger.error(f"Ошибка отправки напоминания пользователю {user_id}: {e}")
+            logger.error(f"Ошибка отправки напоминания за 24 часа пользователю {user_id}: {e}")
+
+async def send_reminders_1h(context: ContextTypes.DEFAULT_TYPE):
+    """Отправка напоминаний за 1 час до записи"""
+    cleanup_result = db.cleanup_completed_appointments()
+    
+    if cleanup_result['total_deleted'] > 0:
+        logger.info(f"Автоочистка перед напоминаниями: удалено {cleanup_result['total_deleted']} записей")
+    
+    # Получаем записи, которые будут через 1 час
+    appointments = db.get_appointments_for_1h_reminder()
+    
+    if not appointments:
+        logger.info("Нет записей для напоминания за 1 час")
+        return
+    
+    for appointment in appointments:
+        appt_id, user_id, user_name, phone, service, date, time = appointment
+        
+        # Не отправляем напоминания для ручных записей администратора
+        if user_name == "Администратор":
+            continue
+            
+        # ИСПРАВЛЕНО: правильное отображение дня недели
+        selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
+        
+        text = (
+            f"🔔 *Скоро ваша запись в {config.BARBERSHOP_NAME}!*\n\n"
+            f"💇 Услуга: {service}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
+            f"⏰ Время: {time}\n\n"
+            f"*До вашей записи остался 1 час!*\n"
+            "Не опаздывайте! 🏃‍♂️"
+        )
+        
+        try:
+            await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+            db.mark_1h_reminder_sent(appt_id)
+            logger.info(f"Напоминание за 1 час отправлено пользователю {user_id}")
+        except BadRequest as e:
+            if "chat not found" in str(e).lower():
+                logger.warning(f"Chat not found for user {user_id}, skipping 1h reminder")
+            else:
+                logger.error(f"BadRequest при отправке напоминания за 1 час пользователю {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка отправки напоминания за 1 час пользователю {user_id}: {e}")
 
 async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
     """Отправка ежедневного расписания администраторам"""
@@ -3258,8 +3306,14 @@ async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
     
-    # Основные задачи
-    job_queue.run_daily(send_reminders, time=datetime.strptime("10:00", "%H:%M").time(), name="daily_reminders")
+    # ОСНОВНЫЕ ЗАДАЧИ - ОБНОВЛЕННЫЕ НАПОМИНАНИЯ
+    # Напоминание за 24 часа - запускаем каждые 5 минут для точности
+    job_queue.run_repeating(send_reminders_24h, interval=300, first=10, name="24h_reminders")
+    
+    # Напоминание за 1 час - запускаем каждые 5 минут для точности
+    job_queue.run_repeating(send_reminders_1h, interval=300, first=10, name="1h_reminders")
+    
+    # Остальные задачи без изменений
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
     
