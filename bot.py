@@ -375,6 +375,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
+
+    # 🔥 ДОБАВЬ ЭТУ ПРОВЕРКУ:
+    if context.user_data.get('awaiting_phone'):
+        logger.info(f"🔍 Пользователь {user_id} awaiting_phone=True, передаем в phone_input")
+        await phone_input(update, context)
+        return
     
     # ПЕРВЫЙ приоритет: обработка ввода ID администратора
     if context.user_data.get('awaiting_admin_id'):
