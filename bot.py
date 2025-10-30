@@ -2723,7 +2723,14 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
         appointments_for_reminder = []
         
         for appointment in all_appointments:
-            appt_id, user_id, user_name, username, phone, service, date, time = appointment
+            # ИСПРАВЛЕНИЕ: правильная распаковка 7 значений
+            appt_id, user_name, user_username, phone, service, date, time = appointment
+            
+            # Получаем user_id отдельным запросом, так как его нет в get_all_appointments()
+            cursor = db.conn.cursor()
+            cursor.execute('SELECT user_id FROM appointments WHERE id = %s', (appt_id,))
+            result = cursor.fetchone()
+            user_id = result[0] if result else None
             
             # Пропускаем ручные записи администратора и невалидные user_id
             if (user_name == "Администратор" or 
@@ -2753,7 +2760,7 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
                     result = cursor.fetchone()
                     
                     if result and not result[0]:  # Если напоминание еще не отправлено
-                        appointments_for_reminder.append(appointment)
+                        appointments_for_reminder.append((appt_id, user_id, user_name, user_username, phone, service, date, time))
                         logger.info(f"✅ Найдена запись для 24h напоминания: {date} {time} (клиент: {user_name})")
                         
             except Exception as e:
@@ -2769,9 +2776,9 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
         sent_count = 0
         error_count = 0
         
-        for appointment in appointments_for_reminder:
+        for appointment_data in appointments_for_reminder:
             try:
-                appt_id, user_id, user_name, username, phone, service, date, time = appointment
+                appt_id, user_id, user_name, user_username, phone, service, date, time = appointment_data
                 
                 # Форматируем дату и время для отображения
                 appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
@@ -2827,7 +2834,14 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
         appointments_for_reminder = []
         
         for appointment in all_appointments:
-            appt_id, user_id, user_name, username, phone, service, date, time = appointment
+            # ИСПРАВЛЕНИЕ: правильная распаковка 7 значений
+            appt_id, user_name, user_username, phone, service, date, time = appointment
+            
+            # Получаем user_id отдельным запросом, так как его нет в get_all_appointments()
+            cursor = db.conn.cursor()
+            cursor.execute('SELECT user_id FROM appointments WHERE id = %s', (appt_id,))
+            result = cursor.fetchone()
+            user_id = result[0] if result else None
             
             # Пропускаем ручные записи администратора и невалидные user_id
             if (user_name == "Администратор" or 
@@ -2857,7 +2871,7 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
                     result = cursor.fetchone()
                     
                     if result and not result[0]:  # Если напоминание еще не отправлено
-                        appointments_for_reminder.append(appointment)
+                        appointments_for_reminder.append((appt_id, user_id, user_name, user_username, phone, service, date, time))
                         logger.info(f"✅ Найдена запись для 1h напоминания: {date} {time} (клиент: {user_name})")
                         
             except Exception as e:
@@ -2873,9 +2887,9 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
         sent_count = 0
         error_count = 0
         
-        for appointment in appointments_for_reminder:
+        for appointment_data in appointments_for_reminder:
             try:
-                appt_id, user_id, user_name, username, phone, service, date, time = appointment
+                appt_id, user_id, user_name, user_username, phone, service, date, time = appointment_data
                 
                 # Форматируем дату и время для отображения
                 appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
@@ -2900,7 +2914,7 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} на {date} {time}")
                 
             except BadRequest as e:
-                if "chat notound" in str(e).lower():
+                if "chat not found" in str(e).lower():
                     logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
                     db.mark_1h_reminder_sent(appt_id)  # Помечаем как отправленное
                 else:
