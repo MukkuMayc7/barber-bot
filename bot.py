@@ -1201,6 +1201,39 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка отправки 1h напоминания для записи #{appointment_id}: {e}")
 
+# ========== ФУНКЦИИ УПРАВЛЕНИЯ НАПОМИНАНИЯМИ ==========
+
+def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
+    """Удаляет запланированные напоминания для отмененной записи"""
+    try:
+        job_queue = context.job_queue
+        removed_count = 0
+        
+        # Удаляем 24-часовое напоминание
+        job_24h_name = f"24h_reminder_{appointment_id}"
+        job_24h = job_queue.get_jobs_by_name(job_24h_name)
+        if job_24h:
+            job_24h[0].schedule_removal()
+            removed_count += 1
+            logger.info(f"✅ Удалено 24h напоминание для записи #{appointment_id}")
+        else:
+            logger.info(f"ℹ️ 24h напоминание не найдено для записи #{appointment_id}")
+        
+        # Удаляем 1-часовое напоминание
+        job_1h_name = f"1h_reminder_{appointment_id}"
+        job_1h = job_queue.get_jobs_by_name(job_1h_name)
+        if job_1h:
+            job_1h[0].schedule_removal()
+            removed_count += 1
+            logger.info(f"✅ Удалено 1h напоминание для записи #{appointment_id}")
+        else:
+            logger.info(f"ℹ️ 1h напоминание не найдено для записи #{appointment_id}")
+            
+        logger.info(f"🎯 Удалено напоминаний: {removed_count}/2 для записи #{appointment_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при удалении напоминаний для записи #{appointment_id}: {e}")
+
 async def show_admin_manual_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи, внесенные администратором вручную"""
     user_id = update.effective_user.id
@@ -3128,11 +3161,13 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Правильное определение типа отмены
     is_admin_cancel = query.data.startswith("cancel_admin_")
     
     if is_admin_cancel:
         if db.is_admin(user_id):
+            # 🔥 УДАЛЯЕМ напоминания ПЕРЕД отменой записи
+            cancel_scheduled_reminders(context, appointment_id)
+            
             appointment = db.cancel_appointment(appointment_id)
             if appointment:
                 try:
@@ -3155,6 +3190,9 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             await query.answer("У вас нет прав для отмены этой записи", show_alert=True)
     else:
+        # 🔥 УДАЛЯЕМ напоминания ПЕРЕД отменой записи
+        cancel_scheduled_reminders(context, appointment_id)
+        
         # Отмена обычным пользователем
         appointment = db.cancel_appointment(appointment_id, user_id)
         if appointment:

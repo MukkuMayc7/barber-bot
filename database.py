@@ -774,21 +774,24 @@ class Database:
         """Массово отменяет записи по списку ID"""
         cursor = self.conn.cursor()
         canceled_appointments = []
-        
+    
         for appt_id in appointment_ids:
             cursor.execute('''
                 SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
                 FROM appointments WHERE id = %s
             ''', (appt_id,))
             appointment = cursor.fetchone()
-            
+        
             if appointment:
+                # 🔥 УДАЛЯЕМ напоминания (нужно передать context)
+                # cancel_scheduled_reminders(context, appt_id)  # ← нужно добавить context
+            
                 cursor.execute('DELETE FROM appointments WHERE id = %s', (appt_id,))
                 cursor.execute('DELETE FROM schedule WHERE date = %s AND time = %s', 
-                              (appointment[4], appointment[5]))
+                          (appointment[4], appointment[5]))
                 canceled_appointments.append(appointment)
                 logger.info(f"Отменена запись #{appt_id} для {appointment[1]}")
-        
+    
         self.conn.commit()
         logger.info(f"Всего отменено записей: {len(canceled_appointments)}")
         return canceled_appointments
