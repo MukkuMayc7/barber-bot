@@ -375,14 +375,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-
-    # 🔥 ДОБАВЬ ЭТУ ПРОВЕРКУ:
+    
+    logger.info(f"🔍 handle_message: пользователь {user_id} отправил '{text}'")
+    logger.info(f"🔍 awaiting_phone: {context.user_data.get('awaiting_phone', 'NOT SET')}")
+    logger.info(f"🔍 awaiting_admin_id: {context.user_data.get('awaiting_admin_id', 'NOT SET')}")
+    
+    # ПЕРВЫЙ приоритет: обработка ввода телефона
     if context.user_data.get('awaiting_phone'):
-        logger.info(f"🔍 Пользователь {user_id} awaiting_phone=True, передаем в phone_input")
+        logger.info(f"🔍 awaiting_phone=True, передаем в phone_input")
         await phone_input(update, context)
         return
     
-    # ПЕРВЫЙ приоритет: обработка ввода ID администратора
+    # ВТОРОЙ приоритет: обработка ввода ID администратора
     if context.user_data.get('awaiting_admin_id'):
         await handle_admin_id_input(update, context)
         return
@@ -871,16 +875,21 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода номера телефона"""
-    # НЕ очищаем awaiting_phone здесь - это сделает handle_message
+    logger.info(f"🔍 phone_input ВЫЗВАН для пользователя {update.effective_user.id}")
+    
+    # НЕ очищаем awaiting_phone здесь - оставляем True до конца обработки
     
     # Проверяем, отправил ли пользователь контакт или ввел текст
     if update.message.contact:
         phone = update.message.contact.phone_number
+        logger.info(f"📞 Получен контакт: {phone}")
     else:
         phone = update.message.text.strip()
+        logger.info(f"📞 Получен текст: {phone}")
     
     # Проверка формата номера телефона
     if not is_valid_phone(phone):
+        logger.info(f"❌ Невалидный телефон: {phone}")
         phone_keyboard = get_phone_keyboard()
         
         is_admin_manual = context.user_data.get('is_admin_manual', False)
@@ -906,19 +915,22 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=phone_keyboard
         )
-        return PHONE  # ← Возвращаем то же состояние
+        return PHONE
     
     # Нормализуем номер телефона
     normalized_phone = normalize_phone(phone)
     context.user_data['phone'] = normalized_phone
+    logger.info(f"✅ Телефон нормализован: {normalized_phone}")
     
     # Создаем запись
     user = update.effective_user
     user_data = context.user_data
     
     is_admin_manual = context.user_data.get('is_admin_manual', False)
+    logger.info(f"🔧 is_admin_manual: {is_admin_manual}")
     
     try:
+        logger.info("🔄 Пытаемся создать запись в БД...")
         # Проверка дублирующихся записей
         appointment_id = db.add_appointment(
             user_id=user.id if not is_admin_manual else 0,
@@ -929,6 +941,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date=user_data['date'],
             time=user_data['time']
         )
+        logger.info(f"✅ Запись создана с ID: {appointment_id}")
         
         # ИСПРАВЛЕНО: правильное отображение дня недели
         selected_date_obj = datetime.strptime(user_data['date'], "%Y-%m-%d").date()
@@ -1008,9 +1021,10 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_keyboard
             )
     
-    # 🔥 ИСПРАВЛЕНИЕ: Очищаем user_data и awaiting_phone ТОЛЬКО ЗДЕСЬ
+    # 🔥 ИСПРАВЛЕНИЕ: Очищаем user_data и awaiting_phone ТОЛЬКО ЗДЕСЬ, в конце функции
     context.user_data.clear()
     context.user_data['awaiting_phone'] = False
+    logger.info(f"✅ phone_input завершен, awaiting_phone установлен в False")
     
     return ConversationHandler.END
 
