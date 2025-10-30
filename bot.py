@@ -930,6 +930,19 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         day_name = config.WEEKDAYS[weekday]
         display_date = selected_date_obj.strftime("%d.%m.%Y")
         
+        # 🔥 НОВОЕ: Планируем напоминания для этой записи
+        if not is_admin_manual:  # Только для обычных пользователей, не для ручных записей админа
+            await schedule_appointment_reminders(
+                context, 
+                appointment_id, 
+                user_data['date'], 
+                user_data['time'], 
+                user.id
+            )
+            logger.info(f"🎯 Напоминания запланированы для записи #{appointment_id}")
+        else:
+            logger.info(f"⏩ Пропуск планирования напоминаний для ручной записи администратора #{appointment_id}")
+        
         # Отправляем уведомление администраторам
         await send_new_appointment_notification(
             context, 
@@ -992,6 +1005,179 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Очищаем user_data после завершения записи
     context.user_data.clear()
     return ConversationHandler.END
+
+async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int, date: str, time: str, user_id: int):
+    """Планирует напоминания для новой записи сразу при создании"""
+    try:
+        logger.info(f"🎯 Планирование напоминаний для записи #{appointment_id}")
+        
+        # Создаем datetime объект для времени записи (в московском времени)
+        appointment_datetime_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+        appointment_datetime_moscow = appointment_datetime_naive.replace(
+            tzinfo=timezone(timedelta(hours=3))
+        )
+        
+        current_datetime_moscow = get_local_time()
+        time_until_appointment = appointment_datetime_moscow - current_datetime_moscow
+        
+        logger.info(f"⏰ До записи #{appointment_id}: {time_until_appointment}")
+        
+        # 24-часовое напоминание (только если до записи больше 24 часов)
+        if time_until_appointment > timedelta(hours=24):
+            reminder_24h_time = appointment_datetime_moscow - timedelta(hours=24)
+            
+            # Проверяем, что напоминание в будущем
+            if reminder_24h_time > current_datetime_moscow:
+                # Планируем 24-часовое напоминание
+                context.job_queue.run_once(
+                    callback=send_single_24h_reminder,
+                    when=reminder_24h_time,
+                    data={'appointment_id': appointment_id, 'user_id': user_id},
+                    name=f"24h_reminder_{appointment_id}"
+                )
+                logger.info(f"✅ Запланировано 24h напоминание для записи #{appointment_id} на {reminder_24h_time.strftime('%d.%m.%Y %H:%M')}")
+            else:
+                logger.info(f"⏩ 24h напоминание для #{appointment_id} пропущено (уже прошло время)")
+        else:
+            logger.info(f"⏩ 24h напоминание для #{appointment_id} пропущено (до записи <24 часов)")
+        
+        # 1-часовое напоминание (только если до записи больше 1 часа)
+        if time_until_appointment > timedelta(hours=1):
+            reminder_1h_time = appointment_datetime_moscow - timedelta(hours=1)
+            
+            # Проверяем, что напоминание в будущем
+            if reminder_1h_time > current_datetime_moscow:
+                # Планируем 1-часовое напоминание
+                context.job_queue.run_once(
+                    callback=send_single_1h_reminder,
+                    when=reminder_1h_time,
+                    data={'appointment_id': appointment_id, 'user_id': user_id},
+                    name=f"1h_reminder_{appointment_id}"
+                )
+                logger.info(f"✅ Запланировано 1h напоминание для записи #{appointment_id} на {reminder_1h_time.strftime('%d.%m.%Y %H:%M')}")
+            else:
+                logger.info(f"⏩ 1h напоминание для #{appointment_id} пропущено (уже прошло время)")
+        else:
+            logger.info(f"⏩ 1h напоминание для #{appointment_id} пропущено (до записи <1 часа)")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при планировании напоминаний для записи #{appointment_id}: {e}")
+
+async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет одно 24-часовое напоминание для конкретной записи"""
+    try:
+        job = context.job
+        appointment_id = job.data['appointment_id']
+        user_id = job.data['user_id']
+        
+        logger.info(f"🔔 Отправка 24h напоминания для записи #{appointment_id}")
+        
+        # Получаем информацию о записи из базы
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            SELECT user_name, user_username, phone, service, appointment_date, appointment_time 
+            FROM appointments WHERE id = %s
+        ''', (appointment_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            logger.error(f"❌ Запись #{appointment_id} не найдена для напоминания")
+            return
+        
+        user_name, user_username, phone, service, date, time = result
+        
+        # Пропускаем если это запись администратора
+        if user_name == "Администратор":
+            logger.info(f"⏩ Пропуск 24h напоминания для записи администратора #{appointment_id}")
+            return
+        
+        # Форматируем дату и время для отображения
+        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = appointment_date.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = appointment_date.strftime("%d.%m.%Y")
+        
+        text = (
+            f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
+            f"Напоминаем, что завтра у вас запись:\n\n"
+            f"💇 Услуга: {service}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
+            f"⏰ Время: {time}\n\n"
+            f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
+            f"📞 *Телефон:* +79178766645\n\n"
+            f"Ждём вас в парикмахерской! 🏃‍♂️"
+        )
+        
+        await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+        db.mark_24h_reminder_sent(appointment_id)
+        logger.info(f"✅ 24h напоминание отправлено пользователю {user_id} для записи #{appointment_id}")
+        
+    except BadRequest as e:
+        if "chat not found" in str(e).lower():
+            logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
+            db.mark_24h_reminder_sent(appointment_id)
+        else:
+            logger.error(f"❌ BadRequest при отправке 24h напоминания: {e}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки 24h напоминания для записи #{appointment_id}: {e}")
+
+async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет одно 1-часовое напоминание для конкретной записи"""
+    try:
+        job = context.job
+        appointment_id = job.data['appointment_id']
+        user_id = job.data['user_id']
+        
+        logger.info(f"⏰ Отправка 1h напоминания для записи #{appointment_id}")
+        
+        # Получаем информацию о записи из базы
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            SELECT user_name, user_username, phone, service, appointment_date, appointment_time 
+            FROM appointments WHERE id = %s
+        ''', (appointment_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            logger.error(f"❌ Запись #{appointment_id} не найдена для напоминания")
+            return
+        
+        user_name, user_username, phone, service, date, time = result
+        
+        # Пропускаем если это запись администратора
+        if user_name == "Администратор":
+            logger.info(f"⏩ Пропуск 1h напоминания для записи администратора #{appointment_id}")
+            return
+        
+        # Форматируем дату и время для отображения
+        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = appointment_date.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = appointment_date.strftime("%d.%m.%Y")
+        
+        text = (
+            f"⏰ *Скоро встреча в {config.BARBERSHOP_NAME}!*\n\n"
+            f"Напоминаем, что через 1 час у вас запись:\n\n"
+            f"💇 Услуга: {service}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
+            f"⏰ Время: {time}\n\n"
+            f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
+            f"📞 *Телефон:* +79178766645\n\n"
+            f"*Не опаздывайте!* 🏃‍♂️"
+        )
+        
+        await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+        db.mark_1h_reminder_sent(appointment_id)
+        logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} для записи #{appointment_id}")
+        
+    except BadRequest as e:
+        if "chat not found" in str(e).lower():
+            logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
+            db.mark_1h_reminder_sent(appointment_id)
+        else:
+            logger.error(f"❌ BadRequest при отправке 1h напоминания: {e}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки 1h напоминания для записи #{appointment_id}: {e}")
 
 async def show_admin_manual_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает записи, внесенные администратором вручную"""
@@ -2707,236 +2893,6 @@ async def handle_schedule_cancel_appointments(update: Update, context: ContextTy
         else:
             raise
 
-async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка уведомлений за 24 часа до КОНКРЕТНОГО времени записи"""
-    try:
-        logger.info("🔄 Запуск 24-часовых напоминаний...")
-        
-        # Получаем текущее московское время
-        moscow_now = get_local_time()
-        current_datetime_moscow = moscow_now
-        
-        logger.info(f"⏰ Текущее московское время: {current_datetime_moscow.strftime('%d.%m.%Y %H:%M')}")
-        
-        # Получаем все будущие записи
-        all_appointments = db.get_all_appointments()
-        appointments_for_reminder = []
-        
-        for appointment in all_appointments:
-            # Правильная распаковка 7 значений
-            appt_id, user_name, user_username, phone, service, date, time = appointment
-            
-            # Получаем user_id отдельным запросом
-            cursor = db.conn.cursor()
-            cursor.execute('SELECT user_id FROM appointments WHERE id = %s', (appt_id,))
-            result = cursor.fetchone()
-            user_id = result[0] if result else None
-            
-            # Пропускаем ручные записи администратора и невалидные user_id
-            if (user_name == "Администратор" or 
-                not user_id or user_id == 0):
-                logger.info(f"⏩ Пропуск записи администратора: #{appt_id}")
-                continue
-            
-            try:
-                # ИСПРАВЛЕНИЕ: создаем aware datetime в московском времени
-                appointment_datetime_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-                
-                # Предполагаем, что время записи указано в московском времени
-                # Создаем aware datetime с московской таймзоной
-                appointment_datetime_moscow = appointment_datetime_naive.replace(
-                    tzinfo=timezone(timedelta(hours=3))
-                )
-                
-                # Вычисляем время для отправки напоминания (за 24 часа до записи)
-                reminder_datetime = appointment_datetime_moscow - timedelta(hours=24)
-                
-                # Проверяем, настало ли время отправки напоминания (±5 минут для надежности)
-                time_diff = current_datetime_moscow - reminder_datetime
-                should_send_reminder = abs(time_diff.total_seconds()) <= 300  # 5 минут
-                
-                if should_send_reminder:
-                    # Проверяем, не отправлено ли уже напоминание
-                    cursor = db.conn.cursor()
-                    cursor.execute('''
-                        SELECT reminder_24h_sent FROM appointments WHERE id = %s
-                    ''', (appt_id,))
-                    result = cursor.fetchone()
-                    
-                    if result and not result[0]:  # Если напоминание еще не отправлено
-                        appointments_for_reminder.append((appt_id, user_id, user_name, user_username, phone, service, date, time))
-                        logger.info(f"✅ Найдена запись для 24h напоминания: {date} {time} (клиент: {user_name})")
-                        
-            except Exception as e:
-                logger.error(f"❌ Ошибка обработки записи #{appt_id}: {e}")
-                continue
-        
-        if not appointments_for_reminder:
-            logger.info("✅ Нет записей для 24-часового напоминания в этот момент")
-            return
-        
-        logger.info(f"📋 Найдено записей для 24h напоминания: {len(appointments_for_reminder)}")
-        
-        sent_count = 0
-        error_count = 0
-        
-        for appointment_data in appointments_for_reminder:
-            try:
-                appt_id, user_id, user_name, user_username, phone, service, date, time = appointment_data
-                
-                # Форматируем дату и время для отображения
-                appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-                weekday = appointment_date.weekday()
-                day_name = config.WEEKDAYS[weekday]
-                display_date = appointment_date.strftime("%d.%m.%Y")
-                
-                text = (
-                    f"🔔 *Напоминание о записи в {config.BARBERSHOP_NAME}*\n\n"
-                    f"Напоминаем, что завтра у вас запись:\n\n"
-                    f"💇 Услуга: {service}\n"
-                    f"📅 Дата: {day_name} {display_date}\n"
-                    f"⏰ Время: {time}\n\n"
-                    f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
-                    f"📞 *Телефон:* +79178766645\n\n"
-                    f"Ждём вас в парикмахерской! 🏃‍♂️"
-                )
-                
-                await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
-                db.mark_24h_reminder_sent(appt_id)
-                sent_count += 1
-                logger.info(f"✅ 24h напоминание отправлено пользователю {user_id} на {date} {time}")
-                
-            except BadRequest as e:
-                if "chat not found" in str(e).lower():
-                    logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
-                    db.mark_24h_reminder_sent(appt_id)  # Помечаем как отправленное
-                else:
-                    logger.error(f"❌ BadRequest при отправке 24h напоминания пользователю {user_id}: {e}")
-                    error_count += 1
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки 24h напоминания пользователю {user_id}: {e}")
-                error_count += 1
-        
-        logger.info(f"📨 24h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments_for_reminder)}")
-            
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка в send_24h_reminders: {e}")
-
-async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка уведомлений за 1 час до КОНКРЕТНОГО времени записи"""
-    try:
-        logger.info("🔄 Запуск 1-часовых напоминаний...")
-        
-        # Получаем текущее московское время
-        moscow_now = get_local_time()
-        current_datetime_moscow = moscow_now
-        
-        logger.info(f"⏰ Текущее московское время: {current_datetime_moscow.strftime('%d.%m.%Y %H:%M')}")
-        
-        # Получаем все будущие записи
-        all_appointments = db.get_all_appointments()
-        appointments_for_reminder = []
-        
-        for appointment in all_appointments:
-            # Правильная распаковка 7 значений
-            appt_id, user_name, user_username, phone, service, date, time = appointment
-            
-            # Получаем user_id отдельным запросом
-            cursor = db.conn.cursor()
-            cursor.execute('SELECT user_id FROM appointments WHERE id = %s', (appt_id,))
-            result = cursor.fetchone()
-            user_id = result[0] if result else None
-            
-            # Пропускаем ручные записи администратора и невалидные user_id
-            if (user_name == "Администратор" or 
-                not user_id or user_id == 0):
-                logger.info(f"⏩ Пропуск записи администратора: #{appt_id}")
-                continue
-            
-            try:
-                # ИСПРАВЛЕНИЕ: создаем aware datetime в московском времени
-                appointment_datetime_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-                
-                # Предполагаем, что время записи указано в московском времени
-                # Создаем aware datetime с московской таймзоной
-                appointment_datetime_moscow = appointment_datetime_naive.replace(
-                    tzinfo=timezone(timedelta(hours=3))
-                )
-                
-                # Вычисляем время для отправки напоминания (за 1 час до записи)
-                reminder_datetime = appointment_datetime_moscow - timedelta(hours=1)
-                
-                # Проверяем, настало ли время отправки напоминания (±5 минут для надежности)
-                time_diff = current_datetime_moscow - reminder_datetime
-                should_send_reminder = abs(time_diff.total_seconds()) <= 300  # 5 минут
-                
-                if should_send_reminder:
-                    # Проверяем, не отправлено ли уже напоминание
-                    cursor = db.conn.cursor()
-                    cursor.execute('''
-                        SELECT reminder_1h_sent FROM appointments WHERE id = %s
-                    ''', (appt_id,))
-                    result = cursor.fetchone()
-                    
-                    if result and not result[0]:  # Если напоминание еще не отправлено
-                        appointments_for_reminder.append((appt_id, user_id, user_name, user_username, phone, service, date, time))
-                        logger.info(f"✅ Найдена запись для 1h напоминания: {date} {time} (клиент: {user_name})")
-                        
-            except Exception as e:
-                logger.error(f"❌ Ошибка обработки записи #{appt_id}: {e}")
-                continue
-        
-        if not appointments_for_reminder:
-            logger.info("✅ Нет записей для 1-часового напоминания в этот момент")
-            return
-        
-        logger.info(f"📋 Найдено записей для 1h напоминания: {len(appointments_for_reminder)}")
-        
-        sent_count = 0
-        error_count = 0
-        
-        for appointment_data in appointments_for_reminder:
-            try:
-                appt_id, user_id, user_name, user_username, phone, service, date, time = appointment_data
-                
-                # Форматируем дату и время для отображения
-                appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-                weekday = appointment_date.weekday()
-                day_name = config.WEEKDAYS[weekday]
-                display_date = appointment_date.strftime("%d.%m.%Y")
-                
-                text = (
-                    f"⏰ *Скоро встреча в {config.BARBERSHOP_NAME}!*\n\n"
-                    f"Напоминаем, что через 1 час у вас запись:\n\n"
-                    f"💇 Услуга: {service}\n"
-                    f"📅 Дата: {day_name} {display_date}\n"
-                    f"⏰ Время: {time}\n\n"
-                    f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
-                    f"📞 *Телефон:* +79178766645\n\n"
-                    f"*Не опаздывайте!* 🏃‍♂️"
-                )
-                
-                await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
-                db.mark_1h_reminder_sent(appt_id)
-                sent_count += 1
-                logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} на {date} {time}")
-                
-            except BadRequest as e:
-                if "chat not found" in str(e).lower():
-                    logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
-                    db.mark_1h_reminder_sent(appt_id)  # Помечаем как отправленное
-                else:
-                    logger.error(f"❌ BadRequest при отправке 1h напоминания пользователю {user_id}: {e}")
-                    error_count += 1
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки 1h напоминания пользователю {user_id}: {e}")
-                error_count += 1
-        
-        logger.info(f"📨 1h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments_for_reminder)}")
-            
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка в send_1h_reminders: {e}")
-
 async def handle_schedule_cancel_changes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик отмены изменений графика"""
     query = update.callback_query
@@ -3465,13 +3421,6 @@ async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
 
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
-    
-    # ИСПРАВЛЕННЫЕ ЗАДАЧИ ДЛЯ УВЕДОМЛЕНИЙ
-    # 24-часовые напоминания - проверяем КАЖДЫЕ 5 минут
-    job_queue.run_repeating(send_24h_reminders, interval=300, first=10, name="24h_reminders")  # Каждые 5 минут
-    
-    # 1-часовые напоминания - проверяем КАЖДЫЕ 5 минут  
-    job_queue.run_repeating(send_1h_reminders, interval=300, first=15, name="1h_reminders")  # Каждые 5 минут
     
     # Остальные задачи
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
