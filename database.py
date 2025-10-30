@@ -799,10 +799,10 @@ class Database:
             cursor = self.conn.cursor()
             cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
             result = cursor.fetchone() is not None
+            # УБИРАЕМ логирование для обычных пользователей - только для отладки реальных админов
             if result:
                 logger.info(f"🔐 Admin access granted for user_id: {user_id}")
-            else:
-                logger.warning(f"🚫 Unauthorized admin access attempt by user_id: {user_id}")
+            # Убираем warning для обычных пользователей - это нормально!
             return result
         except Exception as e:
             logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")

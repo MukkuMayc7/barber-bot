@@ -246,7 +246,7 @@ def start_enhanced_self_ping():
                 external_urls = [
                     "https://www.google.com",
                     "https://api.telegram.org", 
-                    "https://httpbin.org/get"
+                    "https://www.github.com"
                 ]
                 
                 for url in external_urls:
@@ -2723,10 +2723,10 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
         appointments_for_reminder = []
         
         for appointment in all_appointments:
-            # ИСПРАВЛЕНИЕ: правильная распаковка 7 значений
+            # Правильная распаковка 7 значений
             appt_id, user_name, user_username, phone, service, date, time = appointment
             
-            # Получаем user_id отдельным запросом, так как его нет в get_all_appointments()
+            # Получаем user_id отдельным запросом
             cursor = db.conn.cursor()
             cursor.execute('SELECT user_id FROM appointments WHERE id = %s', (appt_id,))
             result = cursor.fetchone()
@@ -2735,14 +2735,18 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
             # Пропускаем ручные записи администратора и невалидные user_id
             if (user_name == "Администратор" or 
                 not user_id or user_id == 0):
+                logger.info(f"⏩ Пропуск записи администратора: #{appt_id}")
                 continue
             
             try:
-                # Создаем datetime объект для времени записи
-                appointment_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+                # ИСПРАВЛЕНИЕ: создаем aware datetime в московском времени
+                appointment_datetime_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
                 
-                # Добавляем 3 часа чтобы привести к московскому времени (если дата в UTC)
-                appointment_datetime_moscow = appointment_datetime + timedelta(hours=3)
+                # Предполагаем, что время записи указано в московском времени
+                # Создаем aware datetime с московской таймзоной
+                appointment_datetime_moscow = appointment_datetime_naive.replace(
+                    tzinfo=timezone(timedelta(hours=3))
+                )
                 
                 # Вычисляем время для отправки напоминания (за 24 часа до записи)
                 reminder_datetime = appointment_datetime_moscow - timedelta(hours=24)
@@ -2834,10 +2838,10 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
         appointments_for_reminder = []
         
         for appointment in all_appointments:
-            # ИСПРАВЛЕНИЕ: правильная распаковка 7 значений
+            # Правильная распаковка 7 значений
             appt_id, user_name, user_username, phone, service, date, time = appointment
             
-            # Получаем user_id отдельным запросом, так как его нет в get_all_appointments()
+            # Получаем user_id отдельным запросом
             cursor = db.conn.cursor()
             cursor.execute('SELECT user_id FROM appointments WHERE id = %s', (appt_id,))
             result = cursor.fetchone()
@@ -2846,14 +2850,18 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
             # Пропускаем ручные записи администратора и невалидные user_id
             if (user_name == "Администратор" or 
                 not user_id or user_id == 0):
+                logger.info(f"⏩ Пропуск записи администратора: #{appt_id}")
                 continue
             
             try:
-                # Создаем datetime объект для времени записи
-                appointment_datetime = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+                # ИСПРАВЛЕНИЕ: создаем aware datetime в московском времени
+                appointment_datetime_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
                 
-                # Добавляем 3 часа чтобы привести к московскому времени (если дата в UTC)
-                appointment_datetime_moscow = appointment_datetime + timedelta(hours=3)
+                # Предполагаем, что время записи указано в московском времени
+                # Создаем aware datetime с московской таймзоной
+                appointment_datetime_moscow = appointment_datetime_naive.replace(
+                    tzinfo=timezone(timedelta(hours=3))
+                )
                 
                 # Вычисляем время для отправки напоминания (за 1 час до записи)
                 reminder_datetime = appointment_datetime_moscow - timedelta(hours=1)
@@ -3657,7 +3665,7 @@ def main():
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
                     CommandHandler("start", start)
                 ],
-                per_message=False
+                per_message=True
             )
             
             application.add_handler(CommandHandler("start", start))
