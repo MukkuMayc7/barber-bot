@@ -487,60 +487,16 @@ class Database:
         return cursor.fetchall()
 
     def get_appointments_for_24h_reminder(self):
-        """Получает записи для 24-часового напоминания"""
-        cursor = self.conn.cursor()
-        
-        try:
-            # Текущая дата и время
-            now = datetime.now()
-            current_date = now.strftime("%Y-%m-%d")
-            current_time = now.strftime("%H:%M")
-            
-            # Завтрашняя дата
-            tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-            
-            # Ищем записи на завтра в то же время
-            cursor.execute('''
-                SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
-                FROM appointments 
-                WHERE appointment_date = %s 
-                AND appointment_time = %s
-                AND reminder_24h_sent = FALSE
-                AND user_name != 'Администратор'
-            ''', (tomorrow, current_time))
-            
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка при получении записей для 24h напоминания: {e}")
-            return []
+        """Получает записи для 24-часового напоминания (устаревший метод)"""
+        # Этот метод больше не используется, логика перенесена в send_24h_reminders
+        logger.warning("⚠️ Используется устаревший метод get_appointments_for_24h_reminder")
+        return []
 
     def get_appointments_for_1h_reminder(self):
-        """Получает записи для 1-часового напоминания"""
-        cursor = self.conn.cursor()
-        
-        try:
-            # Текущая дата и время
-            now = datetime.now()
-            current_date = now.strftime("%Y-%m-%d")
-            
-            # Время через 1 час
-            one_hour_later_dt = now + timedelta(hours=1)
-            one_hour_later = one_hour_later_dt.strftime("%H:%M")
-            
-            # Ищем записи на сегодня через 1 час
-            cursor.execute('''
-                SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time 
-                FROM appointments 
-                WHERE appointment_date = %s 
-                AND appointment_time = %s
-                AND reminder_1h_sent = FALSE
-                AND user_name != 'Администратор'
-            ''', (current_date, one_hour_later))
-            
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка при получении записей для 1h напоминания: {e}")
-            return []
+        """Получает записи для 1-часового напоминания (устаревший метод)"""
+        # Этот метод больше не используется, логика перенесена в send_1h_reminders
+        logger.warning("⚠️ Используется устаревший метод get_appointments_for_1h_reminder")
+        return []
 
     def mark_24h_reminder_sent(self, appointment_id):
         """Отмечает 24-часовое напоминание как отправленное"""

@@ -2708,7 +2708,7 @@ async def handle_schedule_cancel_appointments(update: Update, context: ContextTy
             raise
 
 async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка уведомлений за 24 часа до записи"""
+    """Отправка уведомлений за 24 часа до записи с учетом московского времени"""
     try:
         logger.info("🔄 Запуск 24-часовых напоминаний...")
         
@@ -2720,25 +2720,54 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"⚠️ Ошибка при очистке перед 24h напоминаниями: {e}")
         
-        appointments = db.get_appointments_for_24h_reminder()
+        # Получаем текущее московское время
+        moscow_now = get_local_time()
+        current_date_moscow = moscow_now.strftime("%Y-%m-%d")
+        current_time_moscow = moscow_now.strftime("%H:%M")
         
-        if not appointments:
+        # Завтрашняя дата в московском времени
+        tomorrow_moscow = (moscow_now + timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        logger.info(f"⏰ Московское время: {current_date_moscow} {current_time_moscow}")
+        logger.info(f"📅 Завтра: {tomorrow_moscow}")
+        
+        # Получаем все записи на завтра
+        all_appointments = db.get_all_appointments()
+        appointments_for_reminder = []
+        
+        for appointment in all_appointments:
+            appt_id, user_id, user_name, username, phone, service, date, time = appointment
+            
+            # Пропускаем ручные записи администратора и уже отправленные напоминания
+            if (user_name == "Администратор" or 
+                date != tomorrow_moscow or
+                not user_id or user_id == 0):
+                continue
+            
+            # Проверяем статус напоминания
+            cursor = db.conn.cursor()
+            cursor.execute('''
+                SELECT reminder_24h_sent FROM appointments WHERE id = %s
+            ''', (appt_id,))
+            result = cursor.fetchone()
+            
+            if result and not result[0]:  # Если напоминание еще не отправлено
+                appointments_for_reminder.append(appointment)
+        
+        if not appointments_for_reminder:
             logger.info("✅ Нет записей для 24-часового напоминания")
             return
+        
+        logger.info(f"📋 Найдено записей для 24h напоминания: {len(appointments_for_reminder)}")
         
         sent_count = 0
         error_count = 0
         
-        for appointment in appointments:
+        for appointment in appointments_for_reminder:
             try:
-                appt_id, user_id, user_name, phone, service, date, time = appointment
+                appt_id, user_id, user_name, username, phone, service, date, time = appointment
                 
-                # Пропускаем ручные записи администратора
-                if user_name == "Администратор":
-                    db.mark_24h_reminder_sent(appt_id)  # Помечаем чтобы не пытаться снова
-                    continue
-                    
-                # Форматируем дату и время
+                # Форматируем дату и время для отображения
                 selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
                 weekday = selected_date_obj.weekday()
                 day_name = config.WEEKDAYS[weekday]
@@ -2771,35 +2800,66 @@ async def send_24h_reminders(context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"❌ Ошибка отправки 24h напоминания пользователю {user_id}: {e}")
                 error_count += 1
         
-        logger.info(f"📨 24h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments)}")
+        logger.info(f"📨 24h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments_for_reminder)}")
             
     except Exception as e:
         logger.error(f"❌ Критическая ошибка в send_24h_reminders: {e}")
 
 async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка уведомлений за 1 час до записи"""
+    """Отправка уведомлений за 1 час до записи с учетом московского времени"""
     try:
         logger.info("🔄 Запуск 1-часовых напоминаний...")
         
-        appointments = db.get_appointments_for_1h_reminder()
+        # Получаем текущее московское время
+        moscow_now = get_local_time()
+        current_date_moscow = moscow_now.strftime("%Y-%m-%d")
         
-        if not appointments:
+        # Время через 1 час в московском времени
+        one_hour_later_moscow = (moscow_now + timedelta(hours=1))
+        target_time = one_hour_later_moscow.strftime("%H:%M")
+        target_date = one_hour_later_moscow.strftime("%Y-%m-%d")
+        
+        logger.info(f"⏰ Московское время: {current_date_moscow} {moscow_now.strftime('%H:%M')}")
+        logger.info(f"🎯 Целевое время для 1h напоминания: {target_date} {target_time}")
+        
+        # Получаем все записи
+        all_appointments = db.get_all_appointments()
+        appointments_for_reminder = []
+        
+        for appointment in all_appointments:
+            appt_id, user_id, user_name, username, phone, service, date, time = appointment
+            
+            # Пропускаем ручные записи администратора и неподходящие по времени
+            if (user_name == "Администратор" or 
+                date != target_date or 
+                time != target_time or
+                not user_id or user_id == 0):
+                continue
+            
+            # Проверяем статус напоминания
+            cursor = db.conn.cursor()
+            cursor.execute('''
+                SELECT reminder_1h_sent FROM appointments WHERE id = %s
+            ''', (appt_id,))
+            result = cursor.fetchone()
+            
+            if result and not result[0]:  # Если напоминание еще не отправлено
+                appointments_for_reminder.append(appointment)
+        
+        if not appointments_for_reminder:
             logger.info("✅ Нет записей для 1-часового напоминания")
             return
+        
+        logger.info(f"📋 Найдено записей для 1h напоминания: {len(appointments_for_reminder)}")
         
         sent_count = 0
         error_count = 0
         
-        for appointment in appointments:
+        for appointment in appointments_for_reminder:
             try:
-                appt_id, user_id, user_name, phone, service, date, time = appointment
+                appt_id, user_id, user_name, username, phone, service, date, time = appointment
                 
-                # Пропускаем ручные записи администратора
-                if user_name == "Администратор":
-                    db.mark_1h_reminder_sent(appt_id)  # Помечаем чтобы не пытаться снова
-                    continue
-                    
-                # Форматируем дату и время
+                # Форматируем дату и время для отображения
                 selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
                 weekday = selected_date_obj.weekday()
                 day_name = config.WEEKDAYS[weekday]
@@ -2832,7 +2892,7 @@ async def send_1h_reminders(context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"❌ Ошибка отправки 1h напоминания пользователю {user_id}: {e}")
                 error_count += 1
         
-        logger.info(f"📨 1h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments)}")
+        logger.info(f"📨 1h напоминания: отправлено {sent_count}, ошибок {error_count}, всего {len(appointments_for_reminder)}")
             
     except Exception as e:
         logger.error(f"❌ Критическая ошибка в send_1h_reminders: {e}")
