@@ -865,7 +865,7 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ввода номера телефона"""
-    context.user_data['awaiting_phone'] = False
+    # НЕ очищаем awaiting_phone здесь - это сделает handle_message
     
     # Проверяем, отправил ли пользователь контакт или ввел текст
     if update.message.contact:
@@ -900,7 +900,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=phone_keyboard
         )
-        return PHONE
+        return PHONE  # ← Возвращаем то же состояние
     
     # Нормализуем номер телефона
     normalized_phone = normalize_phone(phone)
@@ -915,7 +915,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Проверка дублирующихся записей
         appointment_id = db.add_appointment(
-            user_id=user.id if not is_admin_manual else 0,  # Для ручных записей администратора user_id = 0
+            user_id=user.id if not is_admin_manual else 0,
             user_name="Администратор" if is_admin_manual else user.full_name,
             user_username="admin_manual" if is_admin_manual else user.username,
             phone=normalized_phone,
@@ -931,7 +931,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_date = selected_date_obj.strftime("%d.%m.%Y")
         
         # 🔥 НОВОЕ: Планируем напоминания для этой записи
-        if not is_admin_manual:  # Только для обычных пользователей, не для ручных записей админа
+        if not is_admin_manual:
             await schedule_appointment_reminders(
                 context, 
                 appointment_id, 
@@ -1002,8 +1002,10 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=main_keyboard
             )
     
-    # Очищаем user_data после завершения записи
+    # 🔥 ИСПРАВЛЕНИЕ: Очищаем user_data и awaiting_phone ТОЛЬКО ЗДЕСЬ
     context.user_data.clear()
+    context.user_data['awaiting_phone'] = False
+    
     return ConversationHandler.END
 
 async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int, date: str, time: str, user_id: int):
