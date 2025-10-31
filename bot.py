@@ -1038,71 +1038,164 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         
         # Создаем datetime объект для времени записи (в московском времени)
         appointment_datetime_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-        appointment_datetime_moscow = appointment_datetime_naive.replace(
-            tzinfo=timezone(timedelta(hours=3))
-        )
         
-        current_datetime_moscow = get_local_time()
-        time_until_appointment = appointment_datetime_moscow - current_datetime_moscow
+        # Устанавливаем московский часовой пояс (UTC+3)
+        moscow_tz = timezone(timedelta(hours=3))
+        appointment_datetime_moscow = appointment_datetime_naive.replace(tzinfo=moscow_tz)
         
-        logger.info(f"⏰ До записи #{appointment_id}: {time_until_appointment}")
+        # Конвертируем в UTC для job queue
+        appointment_datetime_utc = appointment_datetime_moscow.astimezone(timezone.utc)
         
-        # 24-часовое напоминание (только если до записи больше 24 часов)
-        if time_until_appointment > timedelta(hours=24):
-            reminder_24h_time = appointment_datetime_moscow - timedelta(hours=24)
+        # Текущее время в UTC
+        current_datetime_utc = datetime.now(timezone.utc)
+        
+        logger.info(f"📅 Время записи: {appointment_datetime_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
+        logger.info(f"🌐 Время записи UTC: {appointment_datetime_utc.strftime('%d.%m.%Y %H:%M')} UTC")
+        logger.info(f"🕐 Сейчас UTC: {current_datetime_utc.strftime('%d.%m.%Y %H:%M')} UTC")
+        
+        # 24-часовое напоминание (за 24 часа до записи по Москве)
+        reminder_24h_moscow = appointment_datetime_moscow - timedelta(hours=24)
+        reminder_24h_utc = reminder_24h_moscow.astimezone(timezone.utc)
+        
+        time_until_24h = reminder_24h_utc - current_datetime_utc
+        
+        logger.info(f"⏰ 24h напоминание: {reminder_24h_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
+        logger.info(f"🌐 24h напоминание UTC: {reminder_24h_utc.strftime('%d.%m.%Y %H:%M')} UTC")
+        logger.info(f"⏳ До 24h напоминания: {time_until_24h}")
+        
+        if time_until_24h.total_seconds() > 0:
+            # Сохраняем в БД (в UTC)
+            cursor = db.conn.cursor()
+            cursor.execute('''
+                INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
+                VALUES (%s, %s, %s)
+            ''', (appointment_id, '24h', reminder_24h_utc))
+            db.conn.commit()
             
-            # Проверяем, что напоминание в будущем
-            if reminder_24h_time > current_datetime_moscow:
-                # ✅ СОХРАНЯЕМ В БД
-                cursor = db.conn.cursor()
-                cursor.execute('''
-                    INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
-                    VALUES (%s, %s, %s)
-                ''', (appointment_id, '24h', reminder_24h_time))
-                db.conn.commit()
-                
-                # Планируем 24-часовое напоминание
-                context.job_queue.run_once(
-                    callback=send_single_24h_reminder,
-                    when=reminder_24h_time,
-                    data={'appointment_id': appointment_id, 'user_id': user_id},
-                    name=f"24h_reminder_{appointment_id}"
-                )
-                logger.info(f"✅ Запланировано 24h напоминание для записи #{appointment_id} на {reminder_24h_time.strftime('%d.%m.%Y %H:%M')}")
-            else:
-                logger.info(f"⏩ 24h напоминание для #{appointment_id} пропущено (уже прошло время)")
+            # Планируем задачу в UTC времени
+            context.job_queue.run_once(
+                callback=send_single_24h_reminder,
+                when=reminder_24h_utc,
+                data={'appointment_id': appointment_id, 'user_id': user_id},
+                name=f"24h_reminder_{appointment_id}"
+            )
+            logger.info(f"✅ Запланировано 24h напоминание для записи #{appointment_id}")
         else:
-            logger.info(f"⏩ 24h напоминание для #{appointment_id} пропущено (до записи <24 часов)")
+            logger.info(f"⏩ 24h напоминание пропущено (время уже прошло)")
         
-        # 1-часовое напоминание (только если до записи больше 1 часа)
-        if time_until_appointment > timedelta(hours=1):
-            reminder_1h_time = appointment_datetime_moscow - timedelta(hours=1)
+        # 1-часовое напоминание (за 1 час до записи по Москве)
+        reminder_1h_moscow = appointment_datetime_moscow - timedelta(hours=1)
+        reminder_1h_utc = reminder_1h_moscow.astimezone(timezone.utc)
+        
+        time_until_1h = reminder_1h_utc - current_datetime_utc
+        
+        logger.info(f"⏰ 1h напоминание: {reminder_1h_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
+        logger.info(f"🌐 1h напоминание UTC: {reminder_1h_utc.strftime('%d.%m.%Y %H:%M')} UTC")
+        logger.info(f"⏳ До 1h напоминания: {time_until_1h}")
+        
+        if time_until_1h.total_seconds() > 0:
+            # Сохраняем в БД (в UTC)
+            cursor = db.conn.cursor()
+            cursor.execute('''
+                INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
+                VALUES (%s, %s, %s)
+            ''', (appointment_id, '1h', reminder_1h_utc))
+            db.conn.commit()
             
-            # Проверяем, что напоминание в будущем
-            if reminder_1h_time > current_datetime_moscow:
-                # ✅ СОХРАНЯЕМ В БД
-                cursor = db.conn.cursor()
-                cursor.execute('''
-                    INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
-                    VALUES (%s, %s, %s)
-                ''', (appointment_id, '1h', reminder_1h_time))
-                db.conn.commit()
-                
-                # Планируем 1-часовое напоминание
-                context.job_queue.run_once(
-                    callback=send_single_1h_reminder,
-                    when=reminder_1h_time,
-                    data={'appointment_id': appointment_id, 'user_id': user_id},
-                    name=f"1h_reminder_{appointment_id}"
-                )
-                logger.info(f"✅ Запланировано 1h напоминание для записи #{appointment_id} на {reminder_1h_time.strftime('%d.%m.%Y %H:%M')}")
-            else:
-                logger.info(f"⏩ 1h напоминание для #{appointment_id} пропущено (уже прошло время)")
+            # Планируем задачу в UTC времени
+            context.job_queue.run_once(
+                callback=send_single_1h_reminder,
+                when=reminder_1h_utc,
+                data={'appointment_id': appointment_id, 'user_id': user_id},
+                name=f"1h_reminder_{appointment_id}"
+            )
+            logger.info(f"✅ Запланировано 1h напоминание для записи #{appointment_id}")
         else:
-            logger.info(f"⏩ 1h напоминание для #{appointment_id} пропущено (до записи <1 часа)")
+            logger.info(f"⏩ 1h напоминание пропущено (время уже прошло)")
             
     except Exception as e:
         logger.error(f"❌ Ошибка при планировании напоминаний для записи #{appointment_id}: {e}")
+
+async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет одно 24-часовое напоминание для конкретной записи"""
+    try:
+        job = context.job
+        appointment_id = job.data['appointment_id']
+        user_id = job.data['user_id']
+        
+        moscow_time = get_local_time()  # Текущее время по Москве
+        logger.info(f"⏰ [24h] Отправка напоминания для записи #{appointment_id} пользователю {user_id} в {moscow_time.strftime('%d.%m.%Y %H:%M')} MSK")
+        
+        # Получаем информацию о записи из базы
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            SELECT user_name, user_username, phone, service, appointment_date, appointment_time 
+            FROM appointments WHERE id = %s
+        ''', (appointment_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            logger.error(f"❌ Запись #{appointment_id} не найдена для напоминания")
+            return
+        
+        user_name, user_username, phone, service, date, time = result
+        
+        # Пропускаем если это запись администратора
+        if user_name == "Администратор":
+            logger.info(f"⏩ Пропуск 24h напоминания для записи администратора #{appointment_id}")
+            # Помечаем как отправленное в БД
+            cursor.execute('''
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
+                WHERE appointment_id = %s AND reminder_type = '24h'
+            ''', (appointment_id,))
+            db.conn.commit()
+            return
+        
+        # Форматируем дату и время для отображения
+        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+        weekday = appointment_date.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = appointment_date.strftime("%d.%m.%Y")
+        
+        text = (
+            f"⏰ *Напоминание о записи в {config.BARBERSHOP_NAME}!*\n\n"
+            f"Напоминаем, что через 24 часа у вас запись:\n\n"
+            f"💇 Услуга: {service}\n"
+            f"📅 Дата: {day_name} {display_date}\n"
+            f"⏰ Время: {time}\n\n"
+            f"📍 *Адрес:* г. Нижнекамск, ул. Корабельная д.29\n"
+            f"📞 *Телефон:* +79178766645\n\n"
+            f"*Ждём вас!* ✂️"
+        )
+        
+        await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+        
+        # Помечаем как отправленное в БД
+        cursor.execute('''
+            UPDATE scheduled_reminders 
+            SET sent = TRUE 
+            WHERE appointment_id = %s AND reminder_type = '24h'
+        ''', (appointment_id,))
+        db.conn.commit()
+        
+        logger.info(f"✅ 24h напоминание отправлено пользователю {user_id} для записи #{appointment_id}")
+        
+    except BadRequest as e:
+        if "chat not found" in str(e).lower():
+            logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
+            # Помечаем как отправленное чтобы не пытаться снова
+            cursor = db.conn.cursor()
+            cursor.execute('''
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
+                WHERE appointment_id = %s AND reminder_type = '24h'
+            ''', (appointment_id,))
+            db.conn.commit()
+        else:
+            logger.error(f"❌ BadRequest при отправке 24h напоминания: {e}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки 24h напоминания для записи #{appointment_id}: {e}")
 
 async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет одно 1-часовое напоминание для конкретной записи"""
@@ -1111,7 +1204,8 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         appointment_id = job.data['appointment_id']
         user_id = job.data['user_id']
         
-        logger.info(f"⏰ Отправка 1h напоминания для записи #{appointment_id}")
+        moscow_time = get_local_time()  # Текущее время по Москве
+        logger.info(f"⏰ [1h] Отправка напоминания для записи #{appointment_id} пользователю {user_id} в {moscow_time.strftime('%d.%m.%Y %H:%M')} MSK")
         
         # Получаем информацию о записи из базы
         cursor = db.conn.cursor()
@@ -1130,6 +1224,13 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         # Пропускаем если это запись администратора
         if user_name == "Администратор":
             logger.info(f"⏩ Пропуск 1h напоминания для записи администратора #{appointment_id}")
+            # Помечаем как отправленное в БД
+            cursor.execute('''
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
+                WHERE appointment_id = %s AND reminder_type = '1h'
+            ''', (appointment_id,))
+            db.conn.commit()
             return
         
         # Форматируем дату и время для отображения
@@ -1150,13 +1251,28 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         )
         
         await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
-        db.mark_1h_reminder_sent(appointment_id)
+        
+        # Помечаем как отправленное в БД
+        cursor.execute('''
+            UPDATE scheduled_reminders 
+            SET sent = TRUE 
+            WHERE appointment_id = %s AND reminder_type = '1h'
+        ''', (appointment_id,))
+        db.conn.commit()
+        
         logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} для записи #{appointment_id}")
         
     except BadRequest as e:
         if "chat not found" in str(e).lower():
             logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
-            db.mark_1h_reminder_sent(appointment_id)
+            # Помечаем как отправленное чтобы не пытаться снова
+            cursor = db.conn.cursor()
+            cursor.execute('''
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
+                WHERE appointment_id = %s AND reminder_type = '1h'
+            ''', (appointment_id,))
+            db.conn.commit()
         else:
             logger.error(f"❌ BadRequest при отправке 1h напоминания: {e}")
     except Exception as e:
@@ -1194,6 +1310,58 @@ async def debug_jobs(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка в debug_jobs: {e}")
 
+async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Восстанавливает запланированные напоминания из БД при запуске бота"""
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            SELECT sr.appointment_id, sr.reminder_type, sr.scheduled_time, a.user_id 
+            FROM scheduled_reminders sr
+            JOIN appointments a ON sr.appointment_id = a.id
+            WHERE sr.sent = FALSE AND sr.scheduled_time > CURRENT_TIMESTAMP
+        ''')
+        
+        reminders = cursor.fetchall()
+        logger.info(f"🔄 Восстановление {len(reminders)} напоминаний из БД")
+        
+        current_utc = datetime.now(timezone.utc)
+        
+        for appointment_id, reminder_type, scheduled_time, user_id in reminders:
+            try:
+                # Убедимся, что время в UTC
+                if scheduled_time.tzinfo is None:
+                    scheduled_time = scheduled_time.replace(tzinfo=timezone.utc)
+                
+                time_until_reminder = scheduled_time - current_utc
+                
+                if time_until_reminder.total_seconds() > 0:
+                    if reminder_type == '24h':
+                        context.job_queue.run_once(
+                            callback=send_single_24h_reminder,
+                            when=scheduled_time,
+                            data={'appointment_id': appointment_id, 'user_id': user_id},
+                            name=f"24h_reminder_{appointment_id}"
+                        )
+                        logger.info(f"✅ Восстановлено 24h напоминание для #{appointment_id} через {time_until_reminder}")
+                    elif reminder_type == '1h':
+                        context.job_queue.run_once(
+                            callback=send_single_1h_reminder,
+                            when=scheduled_time,
+                            data={'appointment_id': appointment_id, 'user_id': user_id},
+                            name=f"1h_reminder_{appointment_id}"
+                        )
+                        logger.info(f"✅ Восстановлено 1h напоминание для #{appointment_id} через {time_until_reminder}")
+                else:
+                    logger.info(f"⏩ Пропущено восстановление {reminder_type} напоминания для #{appointment_id} (время прошло)")
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка при восстановлении напоминания для записи #{appointment_id}: {e}")
+        
+        logger.info(f"✅ Всего восстановлено напоминаний: {len([r for r in reminders if (r[2].replace(tzinfo=timezone.utc) - current_utc).total_seconds() > 0])}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при восстановлении напоминаний из БД: {e}")
+
 # ========== ФУНКЦИИ УПРАВЛЕНИЯ НАПОМИНАНИЯМИ ==========
 
 def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
@@ -1222,6 +1390,14 @@ def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_i
         else:
             logger.info(f"ℹ️ 1h напоминание не найдено для записи #{appointment_id}")
             
+        # Удаляем из БД
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            DELETE FROM scheduled_reminders 
+            WHERE appointment_id = %s AND sent = FALSE
+        ''', (appointment_id,))
+        db.conn.commit()
+        
         logger.info(f"🎯 Удалено напоминаний: {removed_count}/2 для записи #{appointment_id}")
         
     except Exception as e:
@@ -3472,18 +3648,42 @@ async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка при автоочистке БД: {e}")
 
+async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые отправленные напоминания"""
+    try:
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            DELETE FROM scheduled_reminders 
+            WHERE sent = TRUE AND scheduled_time < CURRENT_TIMESTAMP - INTERVAL '7 days'
+        ''')
+        deleted_count = cursor.rowcount
+        db.conn.commit()
+        
+        if deleted_count > 0:
+            logger.info(f"✅ Очищено {deleted_count} старых напоминаний")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при очистке старых напоминаний: {e}")
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
-    # ✅ ДОБАВИТЬ ОТЛАДОЧНУЮ ЗАДАЧУ - каждые 5 минут
-    job_queue.run_repeating(debug_jobs, interval=300, first=5, name="debug_jobs")
+    # Восстанавливаем напоминания при запуске
+    job_queue.run_once(
+        callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
+        when=5, 
+        name="restore_reminders"
+    )
+    
+    # Отладочная задача
+    job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
     
     # Остальные задачи
-
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
     job_queue.run_daily(cleanup_old_data, time=datetime.strptime("03:00", "%H:%M").time(), name="cleanup_old_data")
-    job_queue.run_repeating(periodic_cleanup, interval=1800, first=10, name="periodic_cleanup")
+    job_queue.run_daily(cleanup_old_reminders, time=datetime.strptime("04:00", "%H:%M").time(), name="cleanup_old_reminders")
+    job_queue.run_repeating(periodic_cleanup, interval=1800, first=15, name="periodic_cleanup")
 
 # ========== ЗАЩИТА ОТ ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ ==========
 
