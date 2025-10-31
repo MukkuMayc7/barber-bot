@@ -944,7 +944,7 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"✅ Запись создана с ID: {appointment_id}")
 
         # ✅ ДОБАВИТЬ ЭТУ СТРОКУ - планируем уведомления для новой записи
-        await schedule_appointment_reminders(context, appointment_id, user_data['date'], user_data['time'])
+        await schedule_appointment_reminders(context, appointment_id, user_data['date'], user_data['time'], user.id)
         
         # ИСПРАВЛЕНО: правильное отображение дня недели
         selected_date_obj = datetime.strptime(user_data['date'], "%Y-%m-%d").date()
