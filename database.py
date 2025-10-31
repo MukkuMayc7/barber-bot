@@ -108,6 +108,17 @@ class Database:
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS scheduled_reminders (
+                id SERIAL PRIMARY KEY,
+                appointment_id INTEGER,
+                reminder_type TEXT,
+                scheduled_time TIMESTAMP,
+                sent BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
         self.conn.commit()
         logger.info("✅ Таблицы успешно созданы/проверены с новой структурой")
