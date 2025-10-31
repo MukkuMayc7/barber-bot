@@ -3728,29 +3728,19 @@ async def cleanup_duplicate_reminders(context: ContextTypes.DEFAULT_TYPE):
 # ↑↑↑ КОНЕЦ функции cleanup_duplicate_reminders ↑↑↑
 
 def setup_job_queue(application: Application):
-    """Настройка задач по расписанию"""
-
-def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
-    # ❌ ВРЕМЕННО ОТКЛЮЧИТЕ восстановление напоминаний
+    # ❌ Восстановление напоминаний временно отключено (пока не решена проблема дублей)
     # job_queue.run_once(
     #     callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
     #     when=5, 
     #     name="restore_reminders"
     # )
     
-    # ✅ ДОБАВЬТЕ очистку дублей при старте (запустится один раз)
-    job_queue.run_once(
-        callback=lambda context: asyncio.create_task(cleanup_duplicate_reminders(context)), 
-        when=2, 
-        name="cleanup_duplicates"
-    )
-    
     # Отладочная задача
     job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
     
-    # Остальные задачи
+    # Регулярные задачи
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
     job_queue.run_daily(cleanup_old_data, time=datetime.strptime("03:00", "%H:%M").time(), name="cleanup_old_data")
