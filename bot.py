@@ -3669,14 +3669,14 @@ def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
     # Восстанавливаем напоминания при запуске
-    job_queue.run_once(
-        callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
-        when=5, 
-        name="restore_reminders"
-    )
+    #job_queue.run_once(
+        #callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
+        #when=5, 
+        #name="restore_reminders"
+    #)
     
     # Отладочная задача
-    job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
+    #job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
     
     # Остальные задачи
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
