@@ -1140,14 +1140,18 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
 
 async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет одно 24-часовое напоминание для конкретной записи"""
-        logger.info(f"🔍 [24h] START отправка напоминания для #{appointment_id}, user_id: {user_id}")
     try:
         job = context.job
         appointment_id = job.data['appointment_id']
         user_id = job.data['user_id']
         
+        # ✅ ПРАВИЛЬНЫЙ ОТСТУП - добавьте эту строку
+        logger.info(f"🔍 [24h] START отправка напоминания для #{appointment_id}, user_id: {user_id}")
+        
         moscow_time = get_local_time()  # Текущее время по Москве
         logger.info(f"⏰ [24h] Отправка напоминания для записи #{appointment_id} пользователю {user_id} в {moscow_time.strftime('%d.%m.%Y %H:%M')} MSK")
+        
+        # ... остальной существующий код функции БЕЗ ИЗМЕНЕНИЙ ...
         
         # Получаем информацию о записи из базы
         cursor = db.conn.cursor()
@@ -1222,14 +1226,18 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет одно 1-часовое напоминание для конкретной записи"""
-        logger.info(f"🔍 [1h] START отправка напоминания для #{appointment_id}, user_id: {user_id}")
     try:
         job = context.job
         appointment_id = job.data['appointment_id']
         user_id = job.data['user_id']
         
+        # ✅ ПРАВИЛЬНЫЙ ОТСТУП - добавьте эту строку
+        logger.info(f"🔍 [1h] START отправка напоминания для #{appointment_id}, user_id: {user_id}")
+        
         moscow_time = get_local_time()  # Текущее время по Москве
         logger.info(f"⏰ [1h] Отправка напоминания для записи #{appointment_id} пользователю {user_id} в {moscow_time.strftime('%d.%m.%Y %H:%M')} MSK")
+        
+        # ... остальной существующий код функции БЕЗ ИЗМЕНЕНИЙ ...
         
         # Получаем информацию о записи из базы
         cursor = db.conn.cursor()
