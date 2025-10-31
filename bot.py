@@ -1053,6 +1053,29 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         logger.info(f"🌐 Время записи UTC: {appointment_datetime_utc.strftime('%d.%m.%Y %H:%M')} UTC")
         logger.info(f"🕐 Сейчас UTC: {current_datetime_utc.strftime('%d.%m.%Y %H:%M')} UTC")
         
+        # СТРОГАЯ ПРОВЕРКА: проверяем в БД, не были ли уже созданы напоминания для этой записи
+        cursor = db.conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) FROM scheduled_reminders 
+            WHERE appointment_id = %s
+        ''', (appointment_id,))
+        existing_reminders_count = cursor.fetchone()[0]
+        
+        if existing_reminders_count > 0:
+            logger.warning(f"⚠️ Напоминания для записи #{appointment_id} уже существуют в БД (count: {existing_reminders_count}), пропускаем создание")
+            return
+        
+        # Проверяем в job queue, не существуют ли уже задачи
+        job_name_24h = f"24h_reminder_{appointment_id}"
+        job_name_1h = f"1h_reminder_{appointment_id}"
+        
+        existing_jobs_24h = context.job_queue.get_jobs_by_name(job_name_24h)
+        existing_jobs_1h = context.job_queue.get_jobs_by_name(job_name_1h)
+        
+        if existing_jobs_24h or existing_jobs_1h:
+            logger.warning(f"⚠️ Задачи напоминаний для записи #{appointment_id} уже существуют в job queue, пропускаем создание")
+            return
+        
         # 24-часовое напоминание (за 24 часа до записи по Москве)
         reminder_24h_moscow = appointment_datetime_moscow - timedelta(hours=24)
         reminder_24h_utc = reminder_24h_moscow.astimezone(timezone.utc)
@@ -1065,19 +1088,17 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         
         if time_until_24h.total_seconds() > 0:
             # Сохраняем в БД (в UTC)
-            cursor = db.conn.cursor()
             cursor.execute('''
                 INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
                 VALUES (%s, %s, %s)
             ''', (appointment_id, '24h', reminder_24h_utc))
-            db.conn.commit()
             
             # Планируем задачу в UTC времени
             context.job_queue.run_once(
                 callback=send_single_24h_reminder,
                 when=reminder_24h_utc,
                 data={'appointment_id': appointment_id, 'user_id': user_id},
-                name=f"24h_reminder_{appointment_id}"
+                name=job_name_24h
             )
             logger.info(f"✅ Запланировано 24h напоминание для записи #{appointment_id}")
         else:
@@ -1095,29 +1116,31 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         
         if time_until_1h.total_seconds() > 0:
             # Сохраняем в БД (в UTC)
-            cursor = db.conn.cursor()
             cursor.execute('''
                 INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
                 VALUES (%s, %s, %s)
             ''', (appointment_id, '1h', reminder_1h_utc))
-            db.conn.commit()
             
             # Планируем задачу в UTC времени
             context.job_queue.run_once(
                 callback=send_single_1h_reminder,
                 when=reminder_1h_utc,
                 data={'appointment_id': appointment_id, 'user_id': user_id},
-                name=f"1h_reminder_{appointment_id}"
+                name=job_name_1h
             )
             logger.info(f"✅ Запланировано 1h напоминание для записи #{appointment_id}")
         else:
             logger.info(f"⏩ 1h напоминание пропущено (время уже прошло)")
+            
+        # Коммитим все изменения в БД
+        db.conn.commit()
             
     except Exception as e:
         logger.error(f"❌ Ошибка при планировании напоминаний для записи #{appointment_id}: {e}")
 
 async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет одно 24-часовое напоминание для конкретной записи"""
+        logger.info(f"🔍 [24h] START отправка напоминания для #{appointment_id}, user_id: {user_id}")
     try:
         job = context.job
         appointment_id = job.data['appointment_id']
@@ -1199,6 +1222,7 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
 
 async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет одно 1-часовое напоминание для конкретной записи"""
+        logger.info(f"🔍 [1h] START отправка напоминания для #{appointment_id}, user_id: {user_id}")
     try:
         job = context.job
         appointment_id = job.data['appointment_id']
@@ -3665,18 +3689,58 @@ async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка при очистке старых напоминаний: {e}")
 
+async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые отправленные напоминания"""
+    # ... существующий код cleanup_old_reminders ...
+
+# ↓↓↓ ДОБАВЬТЕ ЗДЕСЬ функцию cleanup_duplicate_reminders ↓↓↓
+async def cleanup_duplicate_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Очищает дублирующиеся напоминания (запустить один раз)"""
+    try:
+        cursor = db.conn.cursor()
+        
+        # Находим дублирующиеся напоминания
+        cursor.execute('''
+            DELETE FROM scheduled_reminders 
+            WHERE id NOT IN (
+                SELECT MIN(id) 
+                FROM scheduled_reminders 
+                GROUP BY appointment_id, reminder_type, sent
+            )
+        ''')
+        deleted_count = cursor.rowcount
+        db.conn.commit()
+        
+        if deleted_count > 0:
+            logger.info(f"🧹 Очищено {deleted_count} дублирующихся напоминаний")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при очистке дублирующихся напоминаний: {e}")
+
+# ↑↑↑ КОНЕЦ функции cleanup_duplicate_reminders ↑↑↑
+
+def setup_job_queue(application: Application):
+    """Настройка задач по расписанию"""
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
-    # Восстанавливаем напоминания при запуске
-    #job_queue.run_once(
-        #callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
-        #when=5, 
-        #name="restore_reminders"
-    #)
+    # ❌ ВРЕМЕННО ОТКЛЮЧИТЕ восстановление напоминаний
+    # job_queue.run_once(
+    #     callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
+    #     when=5, 
+    #     name="restore_reminders"
+    # )
+    
+    # ✅ ДОБАВЬТЕ очистку дублей при старте (запустится один раз)
+    job_queue.run_once(
+        callback=lambda context: asyncio.create_task(cleanup_duplicate_reminders(context)), 
+        when=2, 
+        name="cleanup_duplicates"
+    )
     
     # Отладочная задача
-    #job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
+    job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
     
     # Остальные задачи
     job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
