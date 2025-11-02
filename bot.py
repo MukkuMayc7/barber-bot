@@ -874,7 +874,6 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик ввода номера телефона"""
     logger.info(f"🔍 phone_input ВЫЗВАН для пользователя {update.effective_user.id}")
     
     # НЕ очищаем awaiting_phone здесь - оставляем True до конца обработки
@@ -883,52 +882,56 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.contact:
         phone = update.message.contact.phone_number
         logger.info(f"📞 Получен контакт: {phone}")
+        # ДЛЯ КОНТАКТОВ ПРОПУСКАЕМ ПРОВЕРКУ - доверяем Telegram
+        normalized_phone = normalize_phone(phone)
+        
     else:
         phone = update.message.text.strip()
         logger.info(f"📞 Получен текст: {phone}")
-    
-    # Проверка формата номера телефона
-    if not is_valid_phone(phone):
-        logger.info(f"❌ Невалидный телефон: {phone}")
-        phone_keyboard = get_phone_keyboard()
         
-        is_admin_manual = context.user_data.get('is_admin_manual', False)
-        if is_admin_manual:
-            text = (
-                "❌ Неверный формат номера телефона.\n\n"
-                "📞 *Введите номер телефона клиента:*\n\n"
-                "*Формат:* +7XXXXXXXXXX или 8XXXXXXXXXX\n"
-                "*Пример:* +79123456789 или 89123456789\n\n"
-                "Пожалуйста, введите номер еще раз:"
+        # Проверка формата номера ТОЛЬКО для ручного ввода
+        if not is_valid_phone(phone):
+            logger.info(f"❌ Невалидный телефон: {phone}")
+            phone_keyboard = get_phone_keyboard()
+            
+            is_admin_manual = context.user_data.get('is_admin_manual', False)
+            if is_admin_manual:
+                text = (
+                    "❌ Неверный формат номера телефона.\n\n"
+                    "📞 *Введите номер телефона клиента:*\n\n"
+                    "*Формат:* +7XXXXXXXXXX или 8XXXXXXXXXX\n"
+                    "*Пример:* +79123456789 или 89123456789\n\n"
+                    "Пожалуйста, введите номер еще раз:"
+                )
+            else:
+                text = (
+                    "❌ Неверный формат номера телефона.\n\n"
+                    "📞 *Для записи введите Ваш номер телефона*\n\n"
+                    "*Формат:* +7XXXXXXXXXX или 8XXXXXXXXXX\n"
+                    "*Пример:* +79123456789 или 89123456789\n\n"
+                    "Пожалуйста, введите номер еще раз:"
+                )
+            
+            await update.message.reply_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=phone_keyboard
             )
-        else:
-            text = (
-                "❌ Неверный формат номера телефона.\n\n"
-                "📞 *Для записи введите Ваш номер телефона*\n\n"
-                "*Формат:* +7XXXXXXXXXX или 8XXXXXXXXXX\n"
-                "*Пример:* +79123456789 или 89123456789\n\n"
-                "Пожалуйста, введите номер еще раз:"
-            )
+            return PHONE
         
-        await update.message.reply_text(
-            text,
-            parse_mode='Markdown',
-            reply_markup=phone_keyboard
-        )
-        return PHONE
+        normalized_phone = normalize_phone(phone)
     
-    # Нормализуем номер телефона
-    normalized_phone = normalize_phone(phone)
+    # ОБЩИЙ КОД для обоих случаев (контакт и ручной ввод)
     context.user_data['phone'] = normalized_phone
     logger.info(f"✅ Телефон нормализован: {normalized_phone}")
     
     # Создаем запись
     user = update.effective_user
     user_data = context.user_data
-    
+
     is_admin_manual = context.user_data.get('is_admin_manual', False)
     logger.info(f"🔧 is_admin_manual: {is_admin_manual}")
-    
+
     try:
         logger.info("🔄 Пытаемся создать запись в БД...")
         # Проверка дублирующихся записей
