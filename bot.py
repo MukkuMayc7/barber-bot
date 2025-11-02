@@ -1747,6 +1747,9 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
         start_time = work_schedule[0][2]  # start_time
         end_time = work_schedule[0][3]    # end_time
         all_slots = db.generate_time_slots(start_time, end_time)
+
+        # Текущее время для определения прошедших слотов
+        current_time = get_local_time().time()
         
         # Создаем словарь занятых слотов
         booked_slots = {}
@@ -1781,15 +1784,25 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
         total_booked = 0
 
         for slot in all_slots:
+            slot_time = datetime.strptime(slot, "%H:%M").time()
+            is_past = slot_time < current_time
+            
             if slot in booked_slots:
                 client_info = booked_slots[slot]
                 # Экранируем специальные символы Markdown
                 safe_name = client_info['name'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
                 safe_phone = client_info['phone'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
-                schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name} {safe_phone}\n"
+                
+                if is_past:
+                    schedule_text += f"⏰ *{slot}* ─── ~~👤 {safe_name} {safe_phone}~~\n"
+                else:
+                    schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name} {safe_phone}\n"
                 total_booked += 1
             else:
-                schedule_text += f"⏰ *{slot}* ─── ✅ Свободно\n"
+                if is_past:
+                    schedule_text += f"⏰ *{slot}* ─── ~~Свободно~~\n"
+                else:
+                    schedule_text += f"⏰ *{slot}* ─── ✅ Свободно\n"
 
         # Добавляем инструкцию по управлению (без Markdown разметки)
         schedule_text += f"\n💡 Быстрые действия:\n"
@@ -3656,21 +3669,26 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     
     await check_duplicate_appointments(context)
 
-async def periodic_cleanup(context: ContextTypes.DEFAULT_TYPE):
-    """Периодическая очистка прошедших записей (каждые 30 минут)"""
+async def cleanup_completed_appointments_daily(context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет вчерашние записи в 00:00 MSK"""
     try:
-        cleanup_result = db.cleanup_completed_appointments()
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         
-        if cleanup_result['total_deleted'] > 0:
-            logger.info(f"✅ Периодическая очистка: удалено {cleanup_result['total_deleted']} прошедших записей")
+        cursor = db.conn.cursor()
+        
+        # Удаляем записи за вчера
+        cursor.execute('DELETE FROM appointments WHERE appointment_date = %s', (yesterday,))
+        deleted_appointments = cursor.rowcount
+        
+        # Удаляем расписание за вчера
+        cursor.execute('DELETE FROM schedule WHERE date = %s', (yesterday,))
+        
+        db.conn.commit()
+        
+        logger.info(f"✅ Ежедневная очистка: удалено {deleted_appointments} вчерашних записей")
+        
     except Exception as e:
-        logger.error(f"❌ Ошибка в periodic_cleanup: {e}")
-        # Пытаемся восстановить соединение с БД
-        try:
-            db.reconnect()
-            logger.info("✅ Соединение с БД восстановлено")
-        except Exception as reconnect_error:
-            logger.error(f"❌ Не удалось восстановить соединение с БД: {reconnect_error}")
+        logger.error(f"❌ Ошибка при ежедневной очистке: {e}")
 
 async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная очистка старых данных по срокам 7/40 дней"""
@@ -3745,7 +3763,12 @@ def setup_job_queue(application: Application):
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
     job_queue.run_daily(cleanup_old_data, time=datetime.strptime("03:00", "%H:%M").time(), name="cleanup_old_data")
     job_queue.run_daily(cleanup_old_reminders, time=datetime.strptime("04:00", "%H:%M").time(), name="cleanup_old_reminders")
-    job_queue.run_repeating(periodic_cleanup, interval=1800, first=15, name="periodic_cleanup")
+    # 21:00 UTC = 00:00 MSK
+    job_queue.run_daily(
+        cleanup_completed_appointments_daily,
+        time=datetime.strptime("21:00", "%H:%M").time(),
+        name="daily_midnight_cleanup"
+    )
 
 # ========== ЗАЩИТА ОТ ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ ==========
 
