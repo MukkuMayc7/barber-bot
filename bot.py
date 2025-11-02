@@ -374,9 +374,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text if update.message.text else ""
     
-    logger.info(f"🔍 handle_message: пользователь {user_id}, тип: {update.message.content_type}, текст: '{text}'")
+    # Определяем тип контента и текст
+    if update.message.text:
+        content_type = "text"
+        text = update.message.text
+    elif update.message.contact:
+        content_type = "contact" 
+        text = "КОНТАКТ"
+    else:
+        content_type = "other"
+        text = ""
+    
+    logger.info(f"🔍 handle_message: пользователь {user_id}, тип: {content_type}, текст: '{text}'")
+    logger.info(f"🔍 awaiting_phone: {context.user_data.get('awaiting_phone', 'NOT SET')}")
+    logger.info(f"🔍 awaiting_admin_id: {context.user_data.get('awaiting_admin_id', 'NOT SET')}")
     
     # ПЕРВЫЙ приоритет: обработка контакта (даже без awaiting_phone)
     if update.message.contact:
