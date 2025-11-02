@@ -894,11 +894,15 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🔍 phone_input ВЫЗВАН для пользователя {update.effective_user.id}")
     
-    # ЯВНАЯ ПРОВЕРКА: если это контакт, устанавливаем awaiting_phone
+    # ОБРАБОТКА КОНТАКТА
     if update.message.contact:
-        context.user_data['awaiting_phone'] = True
-        logger.info(f"📞 Контакт получен, устанавливаем awaiting_phone=True")
+        phone = update.message.contact.phone_number
+        logger.info(f"📞 Получен контакт: {phone}")
+        # ДЛЯ КОНТАКТОВ ПРОПУСКАЕМ ПРОВЕРКУ - доверяем Telegram
+        normalized_phone = normalize_phone(phone)
+        logger.info(f"✅ Контакт нормализован: {normalized_phone}")
         
+    # ОБРАБОТКА ТЕКСТОВОГО ВВОДА
     else:
         phone = update.message.text.strip()
         logger.info(f"📞 Получен текст: {phone}")
@@ -934,10 +938,11 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return PHONE
         
         normalized_phone = normalize_phone(phone)
+        logger.info(f"✅ Текст нормализован: {normalized_phone}")
     
     # ОБЩИЙ КОД для обоих случаев (контакт и ручной ввод)
     context.user_data['phone'] = normalized_phone
-    logger.info(f"✅ Телефон нормализован: {normalized_phone}")
+    logger.info(f"✅ Телефон сохранен в user_data: {normalized_phone}")
     
     # Создаем запись
     user = update.effective_user
