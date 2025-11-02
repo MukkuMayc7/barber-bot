@@ -374,19 +374,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
+    text = update.message.text if update.message.text else ""
     
-    logger.info(f"🔍 handle_message: пользователь {user_id} отправил '{text}'")
-    logger.info(f"🔍 awaiting_phone: {context.user_data.get('awaiting_phone', 'NOT SET')}")
-    logger.info(f"🔍 awaiting_admin_id: {context.user_data.get('awaiting_admin_id', 'NOT SET')}")
+    logger.info(f"🔍 handle_message: пользователь {user_id}, тип: {update.message.content_type}, текст: '{text}'")
     
-    # ПЕРВЫЙ приоритет: обработка ввода телефона
+    # ПЕРВЫЙ приоритет: обработка контакта (даже без awaiting_phone)
+    if update.message.contact:
+        logger.info(f"📞 Получен контакт в handle_message")
+        # Если пользователь отправил контакт, обрабатываем как телефон
+        await phone_input(update, context)
+        return
+    
+    # ВТОРОЙ приоритет: обработка ввода телефона
     if context.user_data.get('awaiting_phone'):
         logger.info(f"🔍 awaiting_phone=True, передаем в phone_input")
         await phone_input(update, context)
         return
     
-    # ВТОРОЙ приоритет: обработка ввода ID администратора
+    # ТРЕТИЙ приоритет: обработка ввода ID администратора
     if context.user_data.get('awaiting_admin_id'):
         await handle_admin_id_input(update, context)
         return
@@ -3953,8 +3958,8 @@ def main():
                 ],
                 states={
                     PHONE: [
-                        MessageHandler(filters.TEXT | filters.CONTACT, phone_input),  # ← ОБЪЕДИНИЛИ
-                    ],
+                        MessageHandler(filters.ALL, phone_input),  # ← ПРИНИМАЕМ ВСЁ
+                ],
                 },
                 fallbacks=[
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
