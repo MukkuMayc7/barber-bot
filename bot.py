@@ -3953,8 +3953,7 @@ def main():
                 ],
                 states={
                     PHONE: [
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),
-                        MessageHandler(filters.CONTACT, phone_input)
+                        MessageHandler(filters.TEXT | filters.CONTACT, phone_input),  # ← ОБЪЕДИНИЛИ
                     ],
                 },
                 fallbacks=[
