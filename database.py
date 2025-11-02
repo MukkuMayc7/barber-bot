@@ -6,6 +6,7 @@ from psycopg.rows import dict_row
 from datetime import datetime, timedelta
 import config
 from urllib.parse import urlparse
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
