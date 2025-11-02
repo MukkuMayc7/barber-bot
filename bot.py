@@ -390,21 +390,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🔍 awaiting_phone: {context.user_data.get('awaiting_phone', 'NOT SET')}")
     logger.info(f"🔍 awaiting_admin_id: {context.user_data.get('awaiting_admin_id', 'NOT SET')}")
     
-    # ПЕРВЫЙ приоритет: обработка контакта (даже без awaiting_phone)
-    if update.message.contact:
-        logger.info(f"📞 Получен контакт в handle_message - передаем в phone_input")
-        # Очищаем awaiting_phone для корректной обработки
-        context.user_data['awaiting_phone'] = True
-        await phone_input(update, context)
-        return
+    # УБРАНА обработка контакта - теперь этим занимается ConversationHandler
     
-    # ВТОРОЙ приоритет: обработка ввода телефона
+    # ПЕРВЫЙ приоритет: обработка ввода телефона
     if context.user_data.get('awaiting_phone'):
         logger.info(f"🔍 awaiting_phone=True, передаем в phone_input")
         await phone_input(update, context)
         return
     
-    # ТРЕТИЙ приоритет: обработка ввода ID администратора
+    # ВТОРОЙ приоритет: обработка ввода ID администратора
     if context.user_data.get('awaiting_admin_id'):
         await handle_admin_id_input(update, context)
         return
@@ -811,6 +805,8 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['time'] = time
     context.user_data['awaiting_phone'] = True
     
+    logger.info(f"🎯 TIME_SELECTED: время {time}, awaiting_phone=True")
+    
     is_admin_manual = context.user_data.get('is_admin_manual', False)
     
     if is_admin_manual:
@@ -837,6 +833,7 @@ async def time_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=phone_keyboard
     )
     
+    logger.info(f"🎯 Возвращаем состояние PHONE: {PHONE}")
     return PHONE
 
 async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3972,25 +3969,24 @@ def main():
                 ],
                 states={
                     PHONE: [
-                        MessageHandler(filters.CONTACT, phone_input),  # Обработка контакта
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),  # Обработка текста
+                        MessageHandler(filters.CONTACT | (filters.TEXT & ~filters.COMMAND), phone_input),
                     ],
-                    },
+                },
                 fallbacks=[
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
                     CommandHandler("start", start)
                 ],
-                per_message=True
+                per_message=False  # ИСПРАВЛЕНО: было True
             )
+            
+            application.add_handler(conv_handler)
+            logger.info("✅ ConversationHandler added")
             
             application.add_handler(CommandHandler("start", start))
             logger.info("✅ CommandHandler 'start' added")
             
             application.add_handler(CommandHandler("stop", stop_command))
             logger.info("✅ CommandHandler 'stop' added")
-            
-            application.add_handler(conv_handler)
-            logger.info("✅ ConversationHandler added")
             
             # ОСНОВНОЙ обработчик текстовых сообщений (ТОЛЬКО ОДИН!)
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
