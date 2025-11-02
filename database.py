@@ -463,14 +463,26 @@ class Database:
         return schedule
 
     def get_user_appointments(self, user_id):
-        """Получает записи пользователя"""
+        """Получает только будущие записи пользователя"""
         cursor = self.conn.cursor()
+        # Текущие дата и время (в московском времени)
+        now = datetime.now()
+        moscow_tz = timezone(timedelta(hours=3))
+        moscow_time = now.astimezone(moscow_tz)
+    
+        current_date = moscow_time.strftime("%Y-%m-%d")
+        current_time = moscow_time.strftime("%H:%M")
+    
         cursor.execute('''
             SELECT id, service, appointment_date, appointment_time 
             FROM appointments 
-            WHERE user_id = %s
+            WHERE user_id = %s AND (
+                appointment_date > %s OR 
+                (appointment_date = %s AND appointment_time >= %s)
+            )
             ORDER BY appointment_date, appointment_time
-        ''', (user_id,))
+        ''', (user_id, current_date, current_date, current_time))
+    
         return cursor.fetchall()
 
     def get_all_appointments(self):
