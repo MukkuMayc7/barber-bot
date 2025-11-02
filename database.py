@@ -638,18 +638,10 @@ class Database:
         }
 
     def cleanup_old_data(self):
-        """Очистка данных по установленным срокам: записи - 7 дней, пользователи - 40 дней"""
+        """Очистка только неактивных пользователей старше 40 дней"""
         cursor = self.conn.cursor()
-        
-        # 1. Очистка записей старше 7 дней
-        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        cursor.execute('''
-            DELETE FROM appointments 
-            WHERE appointment_date < %s
-        ''', (seven_days_ago,))
-        deleted_appointments = cursor.rowcount
-        
-        # 2. Очистка неактивных пользователей старше 40 дней
+    
+        # ТОЛЬКО очистка неактивных пользователей старше 40 дней
         forty_days_ago = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute('''
             DELETE FROM bot_users 
@@ -659,20 +651,14 @@ class Database:
                 WHERE user_id IS NOT NULL
             )
         ''', (forty_days_ago,))
-        deleted_users = cursor.rowcount
-        
-        # 3. Очистка расписания старше 7 дней
-        cursor.execute('''
-            DELETE FROM schedule 
-            WHERE date < %s
-        ''', (seven_days_ago,))
-        
+    
+        deleted_users = cursor.rowcount  # ← ИСПРАВИЛ: было fetchone()[0]
+    
         self.conn.commit()
-        
-        logger.info(f"✅ Очистка БД: удалено {deleted_appointments} записей (>7 дней), {deleted_users} пользователей (>40 дней неактивности)")
-        
+    
+        logger.info(f"✅ Очистка БД: удалено {deleted_users} неактивных пользователей (>40 дней)")
+    
         return {
-            'deleted_appointments': deleted_appointments,
             'deleted_users': deleted_users
         }
 

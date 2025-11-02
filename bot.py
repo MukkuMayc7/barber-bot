@@ -3670,33 +3670,35 @@ async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     await check_duplicate_appointments(context)
 
 async def cleanup_completed_appointments_daily(context: ContextTypes.DEFAULT_TYPE):
-    """Удаляет вчерашние записи в 00:00 MSK"""
+    """Удаляет записи старше 7 дней в 00:00 MSK"""
     try:
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        # Удаляем записи старше 7 дней
+        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
         
         cursor = db.conn.cursor()
         
-        # Удаляем записи за вчера
-        cursor.execute('DELETE FROM appointments WHERE appointment_date = %s', (yesterday,))
+        # Удаляем записи старше 7 дней
+        cursor.execute('DELETE FROM appointments WHERE appointment_date < %s', (seven_days_ago,))
         deleted_appointments = cursor.rowcount
         
-        # Удаляем расписание за вчера
-        cursor.execute('DELETE FROM schedule WHERE date = %s', (yesterday,))
+        # Удаляем расписание старше 7 дней
+        cursor.execute('DELETE FROM schedule WHERE date < %s', (seven_days_ago,))
         
         db.conn.commit()
         
-        logger.info(f"✅ Ежедневная очистка: удалено {deleted_appointments} вчерашних записей")
+        logger.info(f"✅ Ежедневная очистка: удалено {deleted_appointments} записей старше 7 дней")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при ежедневной очистке: {e}")
 
 async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
-    """Ежедневная очистка старых данных по срокам 7/40 дней"""
+    """Очистка только неактивных пользователей"""
     try:
         cleanup_result = db.cleanup_old_data()
-        logger.info(f"✅ Автоочистка БД выполнена: {cleanup_result}")
+        # Обновляем текст лога
+        logger.info(f"✅ Очистка неактивных пользователей: {cleanup_result}")
     except Exception as e:
-        logger.error(f"❌ Ошибка при автоочистке БД: {e}")
+        logger.error(f"❌ Ошибка при очистке пользователей: {e}")
 
 async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Очищает старые отправленные напоминания"""
