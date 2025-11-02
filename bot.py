@@ -3741,7 +3741,7 @@ def setup_job_queue(application: Application):
     job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
     
     # Регулярные задачи
-    job_queue.run_daily(send_daily_schedule, time=datetime.strptime("09:00", "%H:%M").time(), name="daily_schedule")
+    job_queue.run_daily(send_daily_schedule, time=datetime.strptime("06:00", "%H:%M").time(), name="daily_schedule")
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("08:00", "%H:%M").time(), name="check_duplicates")
     job_queue.run_daily(cleanup_old_data, time=datetime.strptime("03:00", "%H:%M").time(), name="cleanup_old_data")
     job_queue.run_daily(cleanup_old_reminders, time=datetime.strptime("04:00", "%H:%M").time(), name="cleanup_old_reminders")
