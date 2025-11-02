@@ -392,8 +392,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ПЕРВЫЙ приоритет: обработка контакта (даже без awaiting_phone)
     if update.message.contact:
-        logger.info(f"📞 Получен контакт в handle_message")
-        # Если пользователь отправил контакт, обрабатываем как телефон
+        logger.info(f"📞 Получен контакт в handle_message - передаем в phone_input")
+        # Очищаем awaiting_phone для корректной обработки
+        context.user_data['awaiting_phone'] = True
         await phone_input(update, context)
         return
     
@@ -893,14 +894,10 @@ async def date_selected_back(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🔍 phone_input ВЫЗВАН для пользователя {update.effective_user.id}")
     
-    # НЕ очищаем awaiting_phone здесь - оставляем True до конца обработки
-    
-    # Проверяем, отправил ли пользователь контакт или ввел текст
+    # ЯВНАЯ ПРОВЕРКА: если это контакт, устанавливаем awaiting_phone
     if update.message.contact:
-        phone = update.message.contact.phone_number
-        logger.info(f"📞 Получен контакт: {phone}")
-        # ДЛЯ КОНТАКТОВ ПРОПУСКАЕМ ПРОВЕРКУ - доверяем Telegram
-        normalized_phone = normalize_phone(phone)
+        context.user_data['awaiting_phone'] = True
+        logger.info(f"📞 Контакт получен, устанавливаем awaiting_phone=True")
         
     else:
         phone = update.message.text.strip()
@@ -3970,9 +3967,10 @@ def main():
                 ],
                 states={
                     PHONE: [
-                        MessageHandler(filters.ALL, phone_input),  # ← ПРИНИМАЕМ ВСЁ
-                ],
-                },
+                        MessageHandler(filters.CONTACT, phone_input),  # Обработка контакта
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, phone_input),  # Обработка текста
+                    ],
+                    },
                 fallbacks=[
                     MessageHandler(filters.Regex("^🔙 Назад$"), date_selected_back),
                     CommandHandler("start", start)
