@@ -1794,13 +1794,13 @@ async def show_today_appointments_visual(update: Update, context: ContextTypes.D
                 safe_phone = client_info['phone'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
                 
                 if is_past:
-                    schedule_text += f"⏰ *{slot}* ─── ~~👤 {safe_name} {safe_phone}~~\n"
+                    schedule_text += f"⏰ *{slot}* ─── ⏳(Прошло)👤 {safe_name}\n"
                 else:
-                    schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name} {safe_phone}\n"
+                    schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name}\n"
                 total_booked += 1
             else:
                 if is_past:
-                    schedule_text += f"⏰ *{slot}* ─── ~~Свободно~~\n"
+                    schedule_text += f"⏰ *{slot}* ─── ⏳ Прошло\n"
                 else:
                     schedule_text += f"⏰ *{slot}* ─── ✅ Свободно\n"
 
@@ -1996,7 +1996,7 @@ async def show_day_appointments_visual(update: Update, context: ContextTypes.DEF
                 # Экранируем специальные символы Markdown
                 safe_name = client_info['name'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
                 safe_phone = client_info['phone'].replace('*', '\\*').replace('_', '\\_').replace('`', '\\`')
-                schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name} {safe_phone}\n"
+                schedule_text += f"⏰ *{slot}* ─── 👤 {safe_name}\n"
                 total_booked += 1
             else:
                 schedule_text += f"⏰ *{slot}* ─── ✅ Свободно\n"
