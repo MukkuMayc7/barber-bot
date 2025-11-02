@@ -487,13 +487,25 @@ class Database:
         return cursor.fetchall()
 
     def get_all_appointments(self):
-        """Получает все записи"""
+        """Получает только БУДУЩИЕ записи"""
         cursor = self.conn.cursor()
+    
+        # Текущие дата и время (московское)
+        now = datetime.now()
+        moscow_offset = timedelta(hours=3)
+        moscow_time = now + moscow_offset
+    
+        current_date = moscow_time.strftime("%Y-%m-%d")
+        current_time = moscow_time.strftime("%H:%M")
+    
         cursor.execute('''
             SELECT id, user_name, user_username, phone, service, appointment_date, appointment_time 
             FROM appointments 
+            WHERE appointment_date > %s OR 
+                  (appointment_date = %s AND appointment_time >= %s)
             ORDER BY appointment_date, appointment_time
-        ''')
+        ''', (current_date, current_date, current_time))
+    
         return cursor.fetchall()
 
     def get_today_appointments(self):
