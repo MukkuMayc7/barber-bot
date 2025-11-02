@@ -511,7 +511,10 @@ class Database:
     def get_today_appointments(self):
         """Получает записи на сегодня"""
         cursor = self.conn.cursor()
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Текущая дата в московском времени
+        moscow_tz = timezone(timedelta(hours=3))
+        moscow_time = datetime.now(moscow_tz)
+        today = moscow_time.strftime("%Y-%m-%d")
         
         cursor.execute('''
             SELECT user_name, phone, service, appointment_time 
@@ -604,9 +607,13 @@ class Database:
     def cleanup_completed_appointments(self):
         """Очищает прошедшие записи"""
         cursor = self.conn.cursor()
-        now = datetime.now()
-        current_date = now.strftime("%Y-%m-%d")
-        current_time = now.strftime("%H:%M")
+
+        # Текущие дата и время в московском времени
+        moscow_tz = timezone(timedelta(hours=3))
+        moscow_time = datetime.now(moscow_tz)
+
+        current_date = moscow_time.strftime("%Y-%m-%d")
+        current_time = moscow_time.strftime("%H:%M")
         
         # Удаляем записи за прошлые даты
         cursor.execute('''
