@@ -1035,28 +1035,27 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int, date: str, time: str, user_id: int):
     """Планирует напоминания для новой записи сразу при создании"""
+    cursor = None
     try:
         logger.info(f"🎯 Планирование напоминаний для записи #{appointment_id}")
         
         current_moscow = get_moscow_time()
         
-        # Создаем datetime объект в московском времени - ИСПРАВЛЕННАЯ ЛОГИКА
+        # Создаем datetime объект в московском времени
         appointment_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
         appointment_moscow = appointment_naive.replace(tzinfo=timezone(timedelta(hours=3)))
         
         logger.info(f"📅 Время записи: {appointment_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
-        logger.info(f"🕐 Текущее время: {current_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
+        
+        # СОЗДАЕМ КУРСОР ВНЕ УСЛОВИЙ - ОБЯЗАТЕЛЬНО!
+        cursor = db.conn.cursor()
         
         # 24-часовое напоминание
         reminder_24h_moscow = appointment_moscow - timedelta(hours=24)
         time_until_24h = (reminder_24h_moscow - current_moscow).total_seconds()
         
-        logger.info(f"⏰ 24h напоминание запланировано на: {reminder_24h_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
-        logger.info(f"⏳ До 24h напоминания: {time_until_24h} секунд")
-        
         if time_until_24h > 0:
             # Сохраняем в БД
-            cursor = db.conn.cursor()
             cursor.execute('''
                 INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
                 VALUES (%s, %s, %s)
@@ -1075,16 +1074,13 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
                 data={'appointment_id': appointment_id, 'user_id': user_id},
                 name=f"24h_reminder_{appointment_id}"
             )
-            logger.info(f"✅ Запланировано 24h напоминание для #{appointment_id} на {reminder_24h_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
+            logger.info(f"✅ Запланировано 24h напоминание для #{appointment_id}")
         else:
             logger.info(f"⏩ 24h напоминание для #{appointment_id} пропущено (время прошло)")
         
         # 1-часовое напоминание
         reminder_1h_moscow = appointment_moscow - timedelta(hours=1)
         time_until_1h = (reminder_1h_moscow - current_moscow).total_seconds()
-        
-        logger.info(f"⏰ 1h напоминание запланировано на: {reminder_1h_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
-        logger.info(f"⏳ До 1h напоминания: {time_until_1h} секунд")
         
         if time_until_1h > 0:
             # Сохраняем в БД
@@ -1106,7 +1102,7 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
                 data={'appointment_id': appointment_id, 'user_id': user_id},
                 name=f"1h_reminder_{appointment_id}"
             )
-            logger.info(f"✅ Запланировано 1h напоминание для #{appointment_id} на {reminder_1h_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
+            logger.info(f"✅ Запланировано 1h напоминание для #{appointment_id}")
         else:
             logger.info(f"⏩ 1h напоминание для #{appointment_id} пропущено (время прошло)")
             
@@ -1117,6 +1113,10 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         logger.error(f"❌ Ошибка при планировании напоминаний для #{appointment_id}: {e}")
         import traceback
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    finally:
+        # Всегда закрываем курсор
+        if cursor:
+            cursor.close()
 
 async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет одно 24-часовое напоминание для конкретной записи"""
