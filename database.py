@@ -10,6 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
+def get_moscow_time():
+    """Возвращает текущее московское время (UTC+3)"""
+    return datetime.now(timezone(timedelta(hours=3)))
+
 class Database:
     def __init__(self):
         self.database_url = config.DATABASE_URL
@@ -73,6 +77,18 @@ class Database:
             )
         ''')
 
+        # Таблица scheduled_reminders с исправленной структурой
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS scheduled_reminders (
+                id SERIAL PRIMARY KEY,
+                appointment_id INTEGER,
+                reminder_type TEXT,
+                scheduled_time TIMESTAMP,
+                sent BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Добавьте UNIQUE индекс
         cursor.execute('''
             CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_unique 
@@ -117,13 +133,13 @@ class Database:
         ''')
 
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS scheduled_reminders (
-                id SERIAL PRIMARY KEY,
-                appointment_id INTEGER,
-                reminder_type TEXT,
-                scheduled_time TIMESTAMP,
-                sent BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                admin_id BIGINT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                added_by BIGINT
             )
         ''')
         
@@ -292,7 +308,7 @@ class Database:
             self.conn.commit()
             logger.info("✅ Установлен график работы по умолчанию")
         else:
-            logger.info(f"ℹ️ В таблице work_schedule уже есть {count} записей")
+            logger.info(f"ℹ️ В таблике work_schedule уже есть {count} записей")
 
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
         """Добавляет новую запись"""
@@ -472,11 +488,8 @@ class Database:
     def get_user_appointments(self, user_id):
         """Получает только будущие записи пользователя"""
         cursor = self.conn.cursor()
-        # Текущие дата и время (в московском времени)
-        now = datetime.now()
-        moscow_tz = timezone(timedelta(hours=3))
-        moscow_time = now.astimezone(moscow_tz)
-    
+        # Текущие дата и время в московском времени
+        moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
     
@@ -496,11 +509,8 @@ class Database:
         """Получает только БУДУЩИЕ записи"""
         cursor = self.conn.cursor()
     
-        # Текущие дата и время (московское)
-        now = datetime.now()
-        moscow_offset = timedelta(hours=3)
-        moscow_time = now + moscow_offset
-    
+        # Текущие дата и время в московском времени
+        moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
     
@@ -518,8 +528,7 @@ class Database:
         """Получает записи на сегодня"""
         cursor = self.conn.cursor()
         # Текущая дата в московском времени
-        moscow_tz = timezone(timedelta(hours=3))
-        moscow_time = datetime.now(moscow_tz)
+        moscow_time = get_moscow_time()
         today = moscow_time.strftime("%Y-%m-%d")
         
         cursor.execute('''
@@ -603,7 +612,7 @@ class Database:
     def get_active_users_count(self, days=30):
         """Получает количество активных пользователей"""
         cursor = self.conn.cursor()
-        cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cutoff_date = (get_moscow_time() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute('''
             SELECT COUNT(*) FROM bot_users 
             WHERE last_seen >= %s
@@ -611,13 +620,11 @@ class Database:
         return cursor.fetchone()[0]
 
     def cleanup_completed_appointments(self):
-        """Очищает прошедшие записи"""
+        """Очищает прошедшие записи в московском времени"""
         cursor = self.conn.cursor()
 
         # Текущие дата и время в московском времени
-        moscow_tz = timezone(timedelta(hours=3))
-        moscow_time = datetime.now(moscow_tz)
-
+        moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
         
@@ -667,7 +674,7 @@ class Database:
         cursor = self.conn.cursor()
     
         # ТОЛЬКО очистка неактивных пользователей старше 40 дней
-        forty_days_ago = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
+        forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute('''
             DELETE FROM bot_users 
             WHERE last_seen < %s 
@@ -677,7 +684,7 @@ class Database:
             )
         ''', (forty_days_ago,))
     
-        deleted_users = cursor.rowcount  # ← ИСПРАВИЛ: было fetchone()[0]
+        deleted_users = cursor.rowcount
     
         self.conn.commit()
     
@@ -692,7 +699,7 @@ class Database:
         cursor = self.conn.cursor()
         
         # Определяем период: последние 7 дней (исключая сегодня)
-        end_date = datetime.now().date()
+        end_date = get_moscow_time().date()
         start_date = end_date - timedelta(days=7)
         
         # 1. Общее количество завершенных записей
@@ -818,9 +825,6 @@ class Database:
             appointment = cursor.fetchone()
         
             if appointment:
-                # 🔥 УДАЛЯЕМ напоминания (нужно передать context)
-                # cancel_scheduled_reminders(context, appt_id)  # ← нужно добавить context
-            
                 cursor.execute('DELETE FROM appointments WHERE id = %s', (appt_id,))
                 cursor.execute('DELETE FROM schedule WHERE date = %s AND time = %s', 
                           (appointment[4], appointment[5]))
