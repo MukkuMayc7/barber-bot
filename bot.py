@@ -323,7 +323,12 @@ def get_moscow_time():
 def get_moscow_time_from_naive(naive_datetime):
     """Конвертирует наивное datetime в московское время"""
     moscow_tz = timezone(timedelta(hours=3))
-    return moscow_tz.localize(naive_datetime)
+    if naive_datetime.tzinfo is None:
+        # Если naive datetime, добавляем московский часовой пояс
+        return naive_datetime.replace(tzinfo=moscow_tz)
+    else:
+        # Если уже имеет часовой пояс, конвертируем в московский
+        return naive_datetime.astimezone(moscow_tz)
 
 def get_main_keyboard(user_id):
     """Создает основную клавиатуру под сообщением"""
@@ -1035,9 +1040,9 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         
         current_moscow = get_moscow_time()
         
-        # Создаем datetime объект в московском времени
+        # Создаем datetime объект в московском времени - ИСПРАВЛЕННАЯ ЛОГИКА
         appointment_naive = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-        appointment_moscow = get_moscow_time_from_naive(appointment_naive)
+        appointment_moscow = appointment_naive.replace(tzinfo=timezone(timedelta(hours=3)))
         
         logger.info(f"📅 Время записи: {appointment_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
         logger.info(f"🕐 Текущее время: {current_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
