@@ -3545,18 +3545,26 @@ def setup_job_queue(application: Application):
         name="restore_reminders"
     )
     
-    job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
-    job_queue.run_repeating(debug_timezones, interval=3600, first=30, name="debug_timezones")
+    # УБИРАЕМ отладочные задачи
+    # job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
+    # job_queue.run_repeating(debug_timezones, interval=3600, first=30, name="debug_timezones")
     
-    job_queue.run_daily(send_daily_schedule, time=datetime.strptime("03:00", "%H:%M").time(), name="daily_schedule")
-    job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("05:00", "%H:%M").time(), name="check_duplicates")
-    job_queue.run_daily(cleanup_old_data, time=datetime.strptime("00:00", "%H:%M").time(), name="cleanup_old_data")
-    job_queue.run_daily(cleanup_old_reminders, time=datetime.strptime("01:00", "%H:%M").time(), name="cleanup_old_reminders")
-    job_queue.run_daily(
-        cleanup_completed_appointments_daily,
-        time=datetime.strptime("21:00", "%H:%M").time(),
-        name="daily_midnight_cleanup"
-    )
+    # ИСПРАВЛЕННЫЕ ВРЕМЕНА (в UTC):
+    
+    # 06:00 UTC = 09:00 MSK - Ежедневное расписание администраторам
+    job_queue.run_daily(send_daily_schedule, time=datetime.strptime("06:00", "%H:%M").time(), name="daily_schedule")
+    
+    # 02:00 UTC = 05:00 MSK - Проверка дубликатов  
+    job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("02:00", "%H:%M").time(), name="check_duplicates")
+    
+    # 21:00 UTC = 00:00 MSK - Очистка неактивных пользователей (40+ дней)
+    job_queue.run_daily(cleanup_old_data, time=datetime.strptime("21:00", "%H:%M").time(), name="cleanup_old_data")
+    
+    # 21:00 UTC = 00:00 MSK - Очистка старых записей (7+ дней) - ДЛЯ СТАТИСТИКИ
+    job_queue.run_daily(cleanup_completed_appointments_daily, time=datetime.strptime("21:00", "%H:%M").time(), name="cleanup_old_appointments")
+    
+    # 22:00 UTC = 01:00 MSK - Очистка старых напоминаний
+    job_queue.run_daily(cleanup_old_reminders, time=datetime.strptime("22:00", "%H:%M").time(), name="cleanup_old_reminders")
     
     job_queue.run_once(cleanup_duplicate_reminders, when=10, name="cleanup_duplicate_reminders")
 
