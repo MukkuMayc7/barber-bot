@@ -72,6 +72,12 @@ class Database:
                 available BOOLEAN DEFAULT TRUE
             )
         ''')
+
+        # Добавьте UNIQUE индекс
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_unique 
+            ON scheduled_reminders(appointment_id, reminder_type)
+        ''')
         
         # Уникальный индекс для schedule (решает ошибку ON CONFLICT)
         cursor.execute('''
