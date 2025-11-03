@@ -940,30 +940,30 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🔧 is_admin_manual: {is_admin_manual}")
 
     try:
-    logger.info("🔄 Пытаемся создать запись в БД...")
-    appointment_id = db.add_appointment(
-        user_id=user.id if not is_admin_manual else 0,
-        user_name="Администратор" if is_admin_manual else user.full_name,
-        user_username="admin_manual" if is_admin_manual else user.username,
-        phone=normalized_phone,
-        service=user_data['service'],
-        date=user_data['date'],
-        time=user_data['time']
-    )
-    logger.info(f"✅ Запись создана с ID: {appointment_id}")
-
-    # ⚠️ ОСТАВЛЯЕМ ТОЛЬКО ОДИН ВЫЗОВ!
-    if not is_admin_manual:
-        await schedule_appointment_reminders(
-            context, 
-            appointment_id, 
-            user_data['date'], 
-            user_data['time'], 
-            user.id
+        logger.info("🔄 Пытаемся создать запись в БД...")
+        appointment_id = db.add_appointment(
+            user_id=user.id if not is_admin_manual else 0,
+            user_name="Администратор" if is_admin_manual else user.full_name,
+            user_username="admin_manual" if is_admin_manual else user.username,
+            phone=normalized_phone,
+            service=user_data['service'],
+            date=user_data['date'],
+            time=user_data['time']
         )
-        logger.info(f"🎯 Напоминания запланированы для записи #{appointment_id}")
-    else:
-        logger.info(f"⏩ Пропуск планирования напоминаний для ручной записи администратора #{appointment_id}")
+        logger.info(f"✅ Запись создана с ID: {appointment_id}")
+
+        # ⚠️ ИСПРАВЛЕННЫЙ КОД - ОДИН ВЫЗОВ schedule_appointment_reminders
+        if not is_admin_manual:
+            await schedule_appointment_reminders(
+                context, 
+                appointment_id, 
+                user_data['date'], 
+                user_data['time'], 
+                user.id
+            )
+            logger.info(f"🎯 Напоминания запланированы для записи #{appointment_id}")
+        else:
+            logger.info(f"⏩ Пропуск планирования напоминаний для ручной записи администратора #{appointment_id}")
         
         await send_new_appointment_notification(
             context, 
