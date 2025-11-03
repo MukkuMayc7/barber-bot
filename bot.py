@@ -3741,10 +3741,10 @@ async def cleanup_duplicate_reminders(context: ContextTypes.DEFAULT_TYPE):
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
-    ❌ Восстановление напоминаний временно отключено (пока не решена проблема дублей)
+    # Восстановление напоминаний ВКЛЮЧЕНО
     job_queue.run_once(
         callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
-        when=5, 
+        when=10, 
         name="restore_reminders"
     )
     
