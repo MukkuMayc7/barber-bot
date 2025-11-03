@@ -952,7 +952,13 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"✅ Запись создана с ID: {appointment_id}")
 
-        # ⚠️ ИСПРАВЛЕННЫЙ КОД - ОДИН ВЫЗОВ schedule_appointment_reminders
+        # ДОБАВЛЕНО: Расчет day_name и display_date перед использованием
+        selected_date_obj = datetime.strptime(user_data['date'], "%Y-%m-%d").date()
+        weekday = selected_date_obj.weekday()
+        day_name = config.WEEKDAYS[weekday]
+        display_date = selected_date_obj.strftime("%d.%m.%Y")
+
+        # ИСПРАВЛЕНО: Один вызов schedule_appointment_reminders вместо двух
         if not is_admin_manual:
             await schedule_appointment_reminders(
                 context, 
