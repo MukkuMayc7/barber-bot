@@ -1,12 +1,9 @@
 # database.py
 import os
 import logging
-import psycopg
-from psycopg.rows import dict_row
-from datetime import datetime, timedelta
-import config
-from urllib.parse import urlparse
+import sqlite3
 from datetime import datetime, timedelta, timezone
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +31,20 @@ class Database:
         self.setup_default_schedule()
 
     def get_connection(self):
-        """Создает соединение с PostgreSQL"""
+        """Создает соединение с SQLite"""
         try:
-            if self.database_url.startswith('postgres://'):
-                self.database_url = self.database_url.replace('postgres://', 'postgresql://')
+            # Извлекаем путь к файлу из DATABASE_URL
+            if self.database_url.startswith('sqlite:///'):
+                db_path = self.database_url[10:]  # убираем 'sqlite:///'
+            else:
+                db_path = 'barbershop.db'
             
-            conn = psycopg.connect(self.database_url)
-            logger.info("✅ Успешное подключение к PostgreSQL")
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row  # Для доступа к колонкам по имени
+            logger.info("✅ Успешное подключение к SQLite")
             return conn
         except Exception as e:
-            logger.error(f"❌ Ошибка подключения к PostgreSQL: {e}")
+            logger.error(f"❌ Ошибка подключения к SQLite: {e}")
             raise
 
     def create_tables(self):
@@ -53,7 +54,7 @@ class Database:
         # Таблица appointments - ОБНОВЛЕННАЯ ВЕРСИЯ
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS appointments (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id BIGINT,
                 user_name TEXT,
                 user_username TEXT,
@@ -70,35 +71,25 @@ class Database:
         # Таблица schedule
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS schedule (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
                 time TEXT,
-                available BOOLEAN DEFAULT TRUE
+                available BOOLEAN DEFAULT TRUE,
+                UNIQUE(date, time)
             )
         ''')
 
         # Таблица scheduled_reminders с исправленной структурой
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS scheduled_reminders (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 appointment_id INTEGER,
                 reminder_type TEXT,
                 scheduled_time TIMESTAMP,
                 sent BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(appointment_id, reminder_type)
             )
-        ''')
-        
-        # Добавьте UNIQUE индекс
-        cursor.execute('''
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_unique 
-            ON scheduled_reminders(appointment_id, reminder_type)
-        ''')
-        
-        # Уникальный индекс для schedule (решает ошибку ON CONFLICT)
-        cursor.execute('''
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_date_time 
-            ON schedule(date, time)
         ''')
         
         # Таблица admin_settings
@@ -112,7 +103,7 @@ class Database:
         # Таблица work_schedule
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS work_schedule (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 weekday INTEGER UNIQUE,
                 start_time TEXT,
                 end_time TEXT,
@@ -151,93 +142,69 @@ class Database:
         cursor = self.conn.cursor()
         
         try:
-            # Проверяем существование колонок по одной и добавляем если нужно
-            cursor.execute("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'appointments' AND column_name = 'reminder_24h_sent'
-            """)
-            if not cursor.fetchone():
+            # Проверяем существование колонок и добавляем если нужно
+            cursor.execute("PRAGMA table_info(appointments)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'reminder_24h_sent' not in columns:
                 cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_24h_sent BOOLEAN DEFAULT FALSE')
                 logger.info("✅ Добавлена колонка reminder_24h_sent")
             
-            cursor.execute("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'appointments' AND column_name = 'reminder_1h_sent'
-            """)
-            if not cursor.fetchone():
+            if 'reminder_1h_sent' not in columns:
                 cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_1h_sent BOOLEAN DEFAULT FALSE')
                 logger.info("✅ Добавлена колонка reminder_1h_sent")
             
-            # Проверяем есть ли старая колонка reminder_sent и переименовываем если нужно
-            cursor.execute("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'appointments' AND column_name = 'reminder_sent'
-            """)
-            if cursor.fetchone():
-                # Проверяем что reminder_24h_sent еще не существует чтобы избежать конфликта
-                cursor.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'appointments' AND column_name = 'reminder_24h_sent'
-                """)
-                if not cursor.fetchone():
-                    cursor.execute('ALTER TABLE appointments RENAME COLUMN reminder_sent TO reminder_24h_sent')
-                    logger.info("✅ Переименована колонка reminder_sent в reminder_24h_sent")
-                else:
-                    # Если обе колонки существуют, удаляем старую
-                    cursor.execute('ALTER TABLE appointments DROP COLUMN reminder_sent')
-                    logger.info("✅ Удалена устаревшая колонка reminder_sent")
-            
+            # Удаляем старую колонку если она существует
+            if 'reminder_sent' in columns:
+                # В SQLite нельзя удалять колонки напрямую, создаем новую таблицу
+                self._recreate_appointments_table()
+                
             self.conn.commit()
             logger.info("✅ Структура базы данных успешно обновлена для новых напоминаний")
             
         except Exception as e:
             logger.error(f"❌ Ошибка при обновлении структуры БД: {e}")
             self.conn.rollback()
-            # Пытаемся добавить колонки по отдельности если основной запрос не сработал
-            self.add_columns_individually()
 
-    def add_columns_individually(self):
-        """Добавляет недостающие колонки по отдельности (резервный метод)"""
-        cursor = self.conn.cursor()
-        
+    def _recreate_appointments_table(self):
+        """Пересоздает таблицу appointments для удаления устаревших колонок"""
         try:
-            # Пробуем добавить reminder_24h_sent
-            try:
-                cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_24h_sent BOOLEAN DEFAULT FALSE')
-                logger.info("✅ Колонка reminder_24h_sent добавлена (индивидуально)")
-            except Exception as e:
-                logger.info(f"ℹ️ Колонка reminder_24h_sent уже существует: {e}")
+            cursor = self.conn.cursor()
             
-            # Пробуем добавить reminder_1h_sent
-            try:
-                cursor.execute('ALTER TABLE appointments ADD COLUMN reminder_1h_sent BOOLEAN DEFAULT FALSE')
-                logger.info("✅ Колонка reminder_1h_sent добавлена (индивидуально)")
-            except Exception as e:
-                logger.info(f"ℹ️ Колонка reminder_1h_sent уже существует: {e}")
+            # Создаем временную таблицу с новой структурой
+            cursor.execute('''
+                CREATE TABLE appointments_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id BIGINT,
+                    user_name TEXT,
+                    user_username TEXT,
+                    phone TEXT,
+                    service TEXT,
+                    appointment_date TEXT,
+                    appointment_time TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reminder_24h_sent BOOLEAN DEFAULT FALSE,
+                    reminder_1h_sent BOOLEAN DEFAULT FALSE
+                )
+            ''')
             
-            # Пробуем удалить старую колонку если она мешает
-            try:
-                cursor.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'appointments' AND column_name = 'reminder_sent'
-                """)
-                if cursor.fetchone():
-                    cursor.execute('ALTER TABLE appointments DROP COLUMN reminder_sent')
-                    logger.info("✅ Устаревшая колонка reminder_sent удалена")
-            except Exception as e:
-                logger.info(f"ℹ️ Не удалось удалить reminder_sent: {e}")
+            # Копируем данные из старой таблицы
+            cursor.execute('''
+                INSERT INTO appointments_new 
+                (id, user_id, user_name, user_username, phone, service, appointment_date, appointment_time, created_at, reminder_24h_sent)
+                SELECT id, user_id, user_name, user_username, phone, service, appointment_date, appointment_time, created_at, reminder_sent
+                FROM appointments
+            ''')
             
-            self.conn.commit()
-            logger.info("✅ Резервное обновление структуры БД завершено")
+            # Удаляем старую таблицу и переименовываем новую
+            cursor.execute('DROP TABLE appointments')
+            cursor.execute('ALTER TABLE appointments_new RENAME TO appointments')
+            
+            logger.info("✅ Таблица appointments пересоздана с новой структурой")
             
         except Exception as e:
-            logger.error(f"❌ Ошибка в резервном обновлении БД: {e}")
-            self.conn.rollback()
+            logger.error(f"❌ Ошибка при пересоздании таблицы appointments: {e}")
+            raise
 
     def create_admin_tables(self):
         """Создает таблицу для администраторов"""
@@ -257,9 +224,8 @@ class Database:
         # Добавляем начальных администраторов из config
         for admin_id in config.ADMIN_IDS:
             cursor.execute('''
-                INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (admin_id) DO NOTHING
+                INSERT OR IGNORE INTO bot_admins (admin_id, username, first_name, last_name, added_by)
+                VALUES (?, ?, ?, ?, ?)
             ''', (admin_id, 'system', 'Система', 'Администратор', 0))
         
         self.conn.commit()
@@ -270,9 +236,8 @@ class Database:
         cursor = self.conn.cursor()
         for admin_id in config.ADMIN_IDS:
             cursor.execute('''
-                INSERT INTO admin_settings (admin_id, notification_chat_id)
-                VALUES (%s, %s)
-                ON CONFLICT (admin_id) DO NOTHING
+                INSERT OR IGNORE INTO admin_settings (admin_id, notification_chat_id)
+                VALUES (?, ?)
             ''', (admin_id, admin_id))
         self.conn.commit()
         logger.info("✅ Настроены уведомления по умолчанию для администраторов")
@@ -298,109 +263,161 @@ class Database:
             for weekday, start_time, end_time, is_working in default_schedule:
                 cursor.execute('''
                     INSERT INTO work_schedule (weekday, start_time, end_time, is_working)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (weekday) DO UPDATE SET
-                    start_time = EXCLUDED.start_time,
-                    end_time = EXCLUDED.end_time,
-                    is_working = EXCLUDED.is_working
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(weekday) DO UPDATE SET
+                    start_time = excluded.start_time,
+                    end_time = excluded.end_time,
+                    is_working = excluded.is_working
                 ''', (weekday, start_time, end_time, is_working))
             
             self.conn.commit()
             logger.info("✅ Установлен график работы по умолчанию")
         else:
-            logger.info(f"ℹ️ В таблике work_schedule уже есть {count} записей")
+            logger.info(f"ℹ️ В таблице work_schedule уже есть {count} записей")
+
+    def check_connection(self):
+        """Проверяет соединение с БД и переподключается при необходимости"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT 1')
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️ Соединение с БД разорвано, переподключаемся: {e}")
+            self.reconnect()
+            return False
 
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
-        """Добавляет новую запись"""
-        cursor = self.conn.cursor()
-        
-        # Проверяем, не занято ли время
-        cursor.execute('''
-            SELECT COUNT(*) FROM appointments 
-            WHERE appointment_date = %s AND appointment_time = %s
-        ''', (date, time))
-        
-        if cursor.fetchone()[0] > 0:
-            raise Exception("Это время уже занято другим клиентом")
-        
-        # Добавляем запись
-        cursor.execute('''
-            INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        ''', (user_id, user_name, user_username, phone, service, date, time))
-        
-        appointment_id = cursor.fetchone()[0]
-        
-        # Обновляем расписание
-        cursor.execute('''
-            INSERT INTO schedule (date, time, available)
-            VALUES (%s, %s, FALSE)
-            ON CONFLICT (date, time) DO UPDATE SET 
-            available = EXCLUDED.available
-        ''', (date, time))
-        
-        self.conn.commit()
-        return appointment_id
-
-    def check_duplicate_appointments(self):
-        """Проверяет дублирующиеся записи"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT appointment_date, appointment_time, COUNT(*) as count
-            FROM appointments
-            GROUP BY appointment_date, appointment_time
-            HAVING COUNT(*) > 1
-        ''')
-        return cursor.fetchall()
-
-    def get_appointments_by_datetime(self, date, time):
-        """Получает записи по дате и времени"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT id, user_name, phone, service
-            FROM appointments
-            WHERE appointment_date = %s AND appointment_time = %s
-            ORDER BY id
-        ''', (date, time))
-        return cursor.fetchall()
-
-    def cancel_appointment(self, appointment_id, user_id=None):
-        """Отменяет запись"""
-        cursor = self.conn.cursor()
-        
-        # Получаем информацию о записи
-        cursor.execute('''
-            SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
-            FROM appointments WHERE id = %s
-        ''', (appointment_id,))
-        appointment = cursor.fetchone()
-        
-        if not appointment:
-            return None
-        
-        # Удаляем запись
-        if user_id:
+        """Добавляет новую запись с переподключением"""
+        try:
+            # Проверяем соединение перед запросом
+            self.check_connection()
+            
+            cursor = self.conn.cursor()
+            
+            # Проверяем, не занято ли время
             cursor.execute('''
-                DELETE FROM appointments 
-                WHERE id = %s AND user_id = %s
-            ''', (appointment_id, user_id))
-        else:
-            cursor.execute('''
-                DELETE FROM appointments WHERE id = %s
-            ''', (appointment_id,))
-        
-        if cursor.rowcount > 0:
-            user_id, user_name, phone, service, date, time = appointment
-            # Освобождаем время в расписании
-            cursor.execute('''
-                DELETE FROM schedule WHERE date = %s AND time = %s
+                SELECT COUNT(*) FROM appointments 
+                WHERE appointment_date = ? AND appointment_time = ?
             ''', (date, time))
             
+            if cursor.fetchone()[0] > 0:
+                raise Exception("Это время уже занято другим клиентом")
+            
+            # Добавляем запись
+            cursor.execute('''
+                INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, user_name, user_username, phone, service, date, time))
+            
+            appointment_id = cursor.lastrowid
+            
+            # Обновляем расписание
+            cursor.execute('''
+                INSERT INTO schedule (date, time, available)
+                VALUES (?, ?, ?)
+                ON CONFLICT(date, time) DO UPDATE SET 
+                available = excluded.available
+            ''', (date, time, False))
+            
             self.conn.commit()
-            return appointment
-        return None
+            return appointment_id
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка БД в add_appointment: {e}")
+            # Пытаемся переподключиться и повторить
+            self.reconnect()
+            try:
+                cursor = self.conn.cursor()
+                
+                # Повторяем проверку занятости
+                cursor.execute('''
+                    SELECT COUNT(*) FROM appointments 
+                    WHERE appointment_date = ? AND appointment_time = ?
+                ''', (date, time))
+                
+                if cursor.fetchone()[0] > 0:
+                    raise Exception("Это время уже занято другим клиентом")
+                
+                # Повторяем добавление записи
+                cursor.execute('''
+                    INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (user_id, user_name, user_username, phone, service, date, time))
+                
+                appointment_id = cursor.lastrowid
+                
+                # Повторяем обновление расписания
+                cursor.execute('''
+                    INSERT INTO schedule (date, time, available)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(date, time) DO UPDATE SET 
+                    available = excluded.available
+                ''', (date, time, False))
+                
+                self.conn.commit()
+                logger.info("✅ Успешное переподключение к БД в add_appointment")
+                return appointment_id
+                
+            except Exception as e2:
+                logger.error(f"❌ Критическая ошибка БД после переподключения в add_appointment: {e2}")
+                raise e2
 
+    def add_or_update_user(self, user_id, username, first_name, last_name):
+        """Добавляет или обновляет пользователя с переподключением"""
+        try:
+            # Проверяем соединение перед запросом
+            self.check_connection()
+            
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                INSERT INTO bot_users (user_id, username, first_name, last_name, last_seen)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                last_name = excluded.last_name,
+                last_seen = excluded.last_seen
+            ''', (user_id, username, first_name, last_name))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"❌ Ошибка БД в add_or_update_user: {e}")
+            # Пытаемся переподключиться
+            self.reconnect()
+            # Повторяем запрос после переподключения
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute('''
+                    INSERT INTO bot_users (user_id, username, first_name, last_name, last_seen)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name,
+                    last_seen = excluded.last_seen
+                ''', (user_id, username, first_name, last_name))
+                self.conn.commit()
+                logger.info("✅ Успешное переподключение к БД в add_or_update_user")
+            except Exception as e2:
+                logger.error(f"❌ Критическая ошибка БД после переподключения: {e2}")
+
+    def is_admin(self, user_id):
+        """Проверяет, является ли пользователь администратором с переподключением"""
+        try:
+            # Проверяем соединение перед запросом
+            self.check_connection()
+            
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = ?', (user_id,))
+            result = cursor.fetchone() is not None
+            if result:
+                logger.info(f"🔐 Admin access granted for user_id: {user_id}")
+            return result
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
+            return False
+
+    # ОСТАЛЬНЫЕ МЕТОДЫ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ (только заменяем %s на ?)
+    
     def get_available_slots(self, date):
         """Получает доступные временные слоты"""
         cursor = self.conn.cursor()
@@ -408,7 +425,7 @@ class Database:
         # Получаем занятые времена
         cursor.execute('''
             SELECT time FROM schedule 
-            WHERE date = %s AND available = FALSE
+            WHERE date = ? AND available = FALSE
         ''', (date,))
         booked_times = [row[0] for row in cursor.fetchall()]
         
@@ -417,7 +434,7 @@ class Database:
         weekday = date_obj.weekday()
         cursor.execute('''
             SELECT start_time, end_time, is_working FROM work_schedule 
-            WHERE weekday = %s
+            WHERE weekday = ?
         ''', (weekday,))
         
         work_hours = cursor.fetchone()
@@ -447,11 +464,11 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute('''
             INSERT INTO work_schedule (weekday, start_time, end_time, is_working)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (weekday) DO UPDATE SET
-            start_time = EXCLUDED.start_time,
-            end_time = EXCLUDED.end_time,
-            is_working = EXCLUDED.is_working
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(weekday) DO UPDATE SET
+            start_time = excluded.start_time,
+            end_time = excluded.end_time,
+            is_working = excluded.is_working
         ''', (weekday, start_time, end_time, is_working))
         
         self.conn.commit()
@@ -464,7 +481,7 @@ class Database:
         if weekday is not None:
             cursor.execute('''
                 SELECT id, weekday, start_time, end_time, is_working 
-                FROM work_schedule WHERE weekday = %s
+                FROM work_schedule WHERE weekday = ?
             ''', (weekday,))
         else:
             cursor.execute('''
@@ -488,7 +505,6 @@ class Database:
     def get_user_appointments(self, user_id):
         """Получает только будущие записи пользователя"""
         cursor = self.conn.cursor()
-        # Текущие дата и время в московском времени
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
@@ -496,9 +512,9 @@ class Database:
         cursor.execute('''
             SELECT id, service, appointment_date, appointment_time 
             FROM appointments 
-            WHERE user_id = %s AND (
-                appointment_date > %s OR 
-                (appointment_date = %s AND appointment_time >= %s)
+            WHERE user_id = ? AND (
+                appointment_date > ? OR 
+                (appointment_date = ? AND appointment_time >= ?)
             )
             ORDER BY appointment_date, appointment_time
         ''', (user_id, current_date, current_date, current_time))
@@ -509,7 +525,6 @@ class Database:
         """Получает только БУДУЩИЕ записи"""
         cursor = self.conn.cursor()
     
-        # Текущие дата и время в московском времени
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
@@ -517,8 +532,8 @@ class Database:
         cursor.execute('''
             SELECT id, user_name, user_username, phone, service, appointment_date, appointment_time 
             FROM appointments 
-            WHERE appointment_date > %s OR 
-                  (appointment_date = %s AND appointment_time >= %s)
+            WHERE appointment_date > ? OR 
+                  (appointment_date = ? AND appointment_time >= ?)
             ORDER BY appointment_date, appointment_time
         ''', (current_date, current_date, current_time))
     
@@ -527,30 +542,53 @@ class Database:
     def get_today_appointments(self):
         """Получает записи на сегодня"""
         cursor = self.conn.cursor()
-        # Текущая дата в московском времени
         moscow_time = get_moscow_time()
         today = moscow_time.strftime("%Y-%m-%d")
         
         cursor.execute('''
             SELECT user_name, phone, service, appointment_time 
             FROM appointments 
-            WHERE appointment_date = %s
+            WHERE appointment_date = ?
             ORDER BY appointment_time
         ''', (today,))
         
         return cursor.fetchall()
 
-    def get_appointments_for_24h_reminder(self):
-        """Получает записи для 24-часового напоминания (устаревший метод)"""
-        # Этот метод больше не используется, логика перенесена в send_24h_reminders
-        logger.warning("⚠️ Используется устаревший метод get_appointments_for_24h_reminder")
-        return []
-
-    def get_appointments_for_1h_reminder(self):
-        """Получает записи для 1-часового напоминания (устаревший метод)"""
-        # Этот метод больше не используется, логика перенесена в send_1h_reminders
-        logger.warning("⚠️ Используется устаревший метод get_appointments_for_1h_reminder")
-        return []
+    def cancel_appointment(self, appointment_id, user_id=None):
+        """Отменяет запись"""
+        cursor = self.conn.cursor()
+        
+        # Получаем информацию о записи
+        cursor.execute('''
+            SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
+            FROM appointments WHERE id = ?
+        ''', (appointment_id,))
+        appointment = cursor.fetchone()
+        
+        if not appointment:
+            return None
+        
+        # Удаляем запись
+        if user_id:
+            cursor.execute('''
+                DELETE FROM appointments 
+                WHERE id = ? AND user_id = ?
+            ''', (appointment_id, user_id))
+        else:
+            cursor.execute('''
+                DELETE FROM appointments WHERE id = ?
+            ''', (appointment_id,))
+        
+        if cursor.rowcount > 0:
+            user_id, user_name, phone, service, date, time = appointment
+            # Освобождаем время в расписании
+            cursor.execute('''
+                DELETE FROM schedule WHERE date = ? AND time = ?
+            ''', (date, time))
+            
+            self.conn.commit()
+            return appointment
+        return None
 
     def mark_24h_reminder_sent(self, appointment_id):
         """Отмечает 24-часовое напоминание как отправленное"""
@@ -558,7 +596,7 @@ class Database:
         cursor.execute('''
             UPDATE appointments 
             SET reminder_24h_sent = TRUE 
-            WHERE id = %s
+            WHERE id = ?
         ''', (appointment_id,))
         self.conn.commit()
 
@@ -568,7 +606,7 @@ class Database:
         cursor.execute('''
             UPDATE appointments 
             SET reminder_1h_sent = TRUE 
-            WHERE id = %s
+            WHERE id = ?
         ''', (appointment_id,))
         self.conn.commit()
 
@@ -577,9 +615,9 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute('''
             INSERT INTO admin_settings (admin_id, notification_chat_id)
-            VALUES (%s, %s)
-            ON CONFLICT (admin_id) DO UPDATE SET
-            notification_chat_id = EXCLUDED.notification_chat_id
+            VALUES (?, ?)
+            ON CONFLICT(admin_id) DO UPDATE SET
+            notification_chat_id = excluded.notification_chat_id
         ''', (admin_id, chat_id))
         self.conn.commit()
 
@@ -588,20 +626,6 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute('SELECT DISTINCT notification_chat_id FROM admin_settings')
         return [row[0] for row in cursor.fetchall() if row[0] is not None]
-
-    def add_or_update_user(self, user_id, username, first_name, last_name):
-        """Добавляет или обновляет пользователя"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT INTO bot_users (user_id, username, first_name, last_name, last_seen)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (user_id) DO UPDATE SET
-            username = EXCLUDED.username,
-            first_name = EXCLUDED.first_name,
-            last_name = EXCLUDED.last_name,
-            last_seen = EXCLUDED.last_seen
-        ''', (user_id, username, first_name, last_name))
-        self.conn.commit()
 
     def get_total_users_count(self):
         """Получает общее количество пользователей"""
@@ -615,7 +639,7 @@ class Database:
         cutoff_date = (get_moscow_time() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute('''
             SELECT COUNT(*) FROM bot_users 
-            WHERE last_seen >= %s
+            WHERE last_seen >= ?
         ''', (cutoff_date,))
         return cursor.fetchone()[0]
 
@@ -623,7 +647,6 @@ class Database:
         """Очищает прошедшие записи в московском времени"""
         cursor = self.conn.cursor()
 
-        # Текущие дата и время в московском времени
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
@@ -631,7 +654,7 @@ class Database:
         # Удаляем записи за прошлые даты
         cursor.execute('''
             DELETE FROM appointments 
-            WHERE appointment_date < %s
+            WHERE appointment_date < ?
         ''', (current_date,))
         
         deleted_past_dates = cursor.rowcount
@@ -639,8 +662,8 @@ class Database:
         # Удаляем прошедшие записи за сегодня
         cursor.execute('''
             DELETE FROM appointments 
-            WHERE appointment_date = %s 
-            AND appointment_time < %s
+            WHERE appointment_date = ? 
+            AND appointment_time < ?
         ''', (current_date, current_time))
         
         deleted_today = cursor.rowcount
@@ -648,12 +671,12 @@ class Database:
         # Очищаем расписание
         cursor.execute('''
             DELETE FROM schedule 
-            WHERE date < %s
+            WHERE date < ?
         ''', (current_date,))
         
         cursor.execute('''
             DELETE FROM schedule 
-            WHERE date = %s AND time < %s
+            WHERE date = ? AND time < ?
         ''', (current_date, current_time))
         
         self.conn.commit()
@@ -673,11 +696,10 @@ class Database:
         """Очистка только неактивных пользователей старше 40 дней"""
         cursor = self.conn.cursor()
     
-        # ТОЛЬКО очистка неактивных пользователей старше 40 дней
         forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute('''
             DELETE FROM bot_users 
-            WHERE last_seen < %s 
+            WHERE last_seen < ? 
             AND user_id NOT IN (
                 SELECT DISTINCT user_id FROM appointments 
                 WHERE user_id IS NOT NULL
@@ -698,7 +720,6 @@ class Database:
         """Собирает статистику за прошедшую неделю (только завершенные записи)"""
         cursor = self.conn.cursor()
         
-        # Определяем период: последние 7 дней (исключая сегодня)
         end_date = get_moscow_time().date()
         start_date = end_date - timedelta(days=7)
         
@@ -706,7 +727,7 @@ class Database:
         cursor.execute('''
             SELECT COUNT(*) 
             FROM appointments 
-            WHERE appointment_date >= %s AND appointment_date < %s
+            WHERE appointment_date >= ? AND appointment_date < ?
         ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
         total_appointments = cursor.fetchone()[0]
         
@@ -714,7 +735,7 @@ class Database:
         cursor.execute('''
             SELECT appointment_time, COUNT(*) as count
             FROM appointments 
-            WHERE appointment_date >= %s AND appointment_date < %s
+            WHERE appointment_date >= ? AND appointment_date < ?
             GROUP BY appointment_time 
             ORDER BY count DESC 
             LIMIT 1
@@ -727,12 +748,12 @@ class Database:
         cursor.execute('''
             SELECT COUNT(DISTINCT user_id) 
             FROM appointments 
-            WHERE appointment_date >= %s AND appointment_date < %s
+            WHERE appointment_date >= ? AND appointment_date < ?
             AND user_id IS NOT NULL 
             AND user_id NOT IN (
                 SELECT DISTINCT user_id 
                 FROM appointments 
-                WHERE appointment_date < %s
+                WHERE appointment_date < ?
             )
         ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), start_date.strftime("%Y-%m-%d")))
         new_clients = cursor.fetchone()[0]
@@ -741,12 +762,12 @@ class Database:
         cursor.execute('''
             SELECT COUNT(DISTINCT user_id) 
             FROM appointments 
-            WHERE appointment_date >= %s AND appointment_date < %s
+            WHERE appointment_date >= ? AND appointment_date < ?
             AND user_id IS NOT NULL 
             AND user_id IN (
                 SELECT DISTINCT user_id 
                 FROM appointments 
-                WHERE appointment_date < %s
+                WHERE appointment_date < ?
             )
         ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), start_date.strftime("%Y-%m-%d")))
         regular_clients = cursor.fetchone()[0]
@@ -765,23 +786,20 @@ class Database:
         """Находит конфликтующие записи при изменении графика"""
         cursor = self.conn.cursor()
         
-        # Получаем все будущие записи
         cursor.execute('''
             SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time
             FROM appointments 
-            WHERE TO_DATE(appointment_date, 'YYYY-MM-DD') >= CURRENT_DATE
+            WHERE DATE(appointment_date) >= DATE('now')
             ORDER BY appointment_date, appointment_time
         ''')
         
         all_future_appointments = cursor.fetchall()
         
-        # Фильтруем в Python, чтобы избежать проблем с DOW в PostgreSQL
         conflicting_appointments = []
         
         for appointment in all_future_appointments:
             appt_id, user_id, user_name, phone, service, date, time = appointment
             
-            # Определяем день недели записи в Python
             try:
                 appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
                 appointment_weekday = appointment_date.weekday()
@@ -789,20 +807,16 @@ class Database:
                 logger.error(f"Неверный формат даты в записи {appt_id}: {date}")
                 continue
             
-            # Проверяем, относится ли запись к изменяемому дню недели
             if appointment_weekday == weekday:
                 if not new_is_working:
-                    # Если день становится выходным - все записи на этот день конфликтующие
                     conflicting_appointments.append(appointment)
                     logger.info(f"Найдена конфликтующая запись (выходной): {date} {time} - {user_name}")
                 else:
-                    # Если изменяется время - проверяем попадает ли время записи в новый график
                     try:
                         appointment_time = datetime.strptime(time, "%H:%M").time()
                         new_start = datetime.strptime(new_start_time, "%H:%M").time()
                         new_end = datetime.strptime(new_end_time, "%H:%M").time()
                         
-                        # Запись конфликтует, если она вне нового графика
                         if appointment_time < new_start or appointment_time >= new_end:
                             conflicting_appointments.append(appointment)
                             logger.info(f"Найдена конфликтующая запись (время): {date} {time} - {user_name}")
@@ -820,13 +834,13 @@ class Database:
         for appt_id in appointment_ids:
             cursor.execute('''
                 SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
-                FROM appointments WHERE id = %s
+                FROM appointments WHERE id = ?
             ''', (appt_id,))
             appointment = cursor.fetchone()
         
             if appointment:
-                cursor.execute('DELETE FROM appointments WHERE id = %s', (appt_id,))
-                cursor.execute('DELETE FROM schedule WHERE date = %s AND time = %s', 
+                cursor.execute('DELETE FROM appointments WHERE id = ?', (appt_id,))
+                cursor.execute('DELETE FROM schedule WHERE date = ? AND time = ?', 
                           (appointment[4], appointment[5]))
                 canceled_appointments.append(appointment)
                 logger.info(f"Отменена запись #{appt_id} для {appointment[1]}")
@@ -835,29 +849,14 @@ class Database:
         logger.info(f"Всего отменено записей: {len(canceled_appointments)}")
         return canceled_appointments
 
-    def is_admin(self, user_id):
-        """Проверяет, является ли пользователь администратором"""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = %s', (user_id,))
-            result = cursor.fetchone() is not None
-            # УБИРАЕМ логирование для обычных пользователей - только для отладки реальных админов
-            if result:
-                logger.info(f"🔐 Admin access granted for user_id: {user_id}")
-            # Убираем warning для обычных пользователей - это нормально!
-            return result
-        except Exception as e:
-            logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
-            return False
-
     def add_admin(self, admin_id, username, first_name, last_name, added_by):
         """Добавляет администратора"""
         try:
             cursor = self.conn.cursor()
             cursor.execute('''
                 INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (admin_id) DO NOTHING
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(admin_id) DO NOTHING
             ''', (admin_id, username, first_name, last_name, added_by))
             self.conn.commit()
             
@@ -877,13 +876,12 @@ class Database:
     def remove_admin(self, admin_id):
         """Удаляет администратора, если он не защищен"""
         try:
-            # Проверяем, не защищен ли администратор
             if hasattr(config, 'PROTECTED_ADMINS') and admin_id in config.PROTECTED_ADMINS:
                 logger.warning(f"🚫 Попытка удалить защищенного администратора {admin_id}")
                 return False
                 
             cursor = self.conn.cursor()
-            cursor.execute('DELETE FROM bot_admins WHERE admin_id = %s', (admin_id,))
+            cursor.execute('DELETE FROM bot_admins WHERE admin_id = ?', (admin_id,))
             self.conn.commit()
             
             deleted = cursor.rowcount > 0
@@ -920,7 +918,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute('''
             SELECT admin_id, username, first_name, last_name, added_at, added_by
-            FROM bot_admins WHERE admin_id = %s
+            FROM bot_admins WHERE admin_id = ?
         ''', (admin_id,))
         return cursor.fetchone()
 

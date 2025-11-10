@@ -638,7 +638,7 @@ async def make_appointment_start(update: Update, context: ContextTypes.DEFAULT_T
     
     keyboard = [
         [InlineKeyboardButton("💇‍♂️ Мужская стрижка", callback_data="service_Мужская стрижка")],
-        [InlineKeyboardButton("💇‍♀️ Женская стрижка", callback_data="service_Женская стрижка")],
+        # [InlineKeyboardButton("💇‍♀️ Женская стрижка", callback_data="service_Женская стрижка")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ]
     
