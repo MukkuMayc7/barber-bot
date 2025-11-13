@@ -23,6 +23,15 @@ import config
 import httpx
 import asyncio
 
+def get_database_path():
+    """🎯 ВАЖНО ДЛЯ RENDER: определяет путь к БД"""
+    import os
+    # На Render файлы сохраняются только в /tmp/
+    if os.path.exists('/tmp'):
+        return '/tmp/barbershop.db'
+    else:
+        return 'barbershop.db'
+
 # Настройка логирования
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
@@ -3464,23 +3473,12 @@ async def cleanup_completed_appointments_daily(context: ContextTypes.DEFAULT_TYP
         logger.error(f"❌ Ошибка при ежедневной очистке: {e}")
 
 async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
-    """Очистка только неактивных пользователей старше 40 дней"""
+    """🎯 УЛУЧШЕННАЯ ОЧИСТКА ДЛЯ RENDER"""
     try:
-        # Используем прямой вызов метода БД
-        forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor = db.execute_with_retry('''
-            DELETE FROM bot_users 
-            WHERE last_seen < ? 
-            AND user_id NOT IN (
-                SELECT DISTINCT user_id FROM appointments 
-                WHERE user_id IS NOT NULL
-            )
-        ''', (forty_days_ago,))
-
-        deleted_users = cursor.rowcount
-        db.conn.commit()
-
-        logger.info(f"✅ Очистка БД: удалено {deleted_users} неактивных пользователей (>40 дней)")
+        # Используем улучшенную функцию из БД
+        cleanup_result = db.automatic_cleanup()  # 🎯 ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ
+        
+        logger.info(f"✅ Очистка БД: удалено {cleanup_result['total_deleted']} записей")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при очистке пользователей: {e}")
@@ -3564,29 +3562,42 @@ async def optimize_database(context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def backup_database(context: ContextTypes.DEFAULT_TYPE):
-    """Создает резервную копию базы данных - ТОЛЬКО В ПАМЯТИ для Render"""
+    """🎯 УЛУЧШЕННОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ ДЛЯ RENDER"""
     try:
-        # НА RENDER ФАЙЛОВАЯ СИСТЕМА ВРЕМЕННАЯ!
-        # Бэкапы будут удаляться при перезапуске, поэтому просто логируем
         import datetime
         
-        # Получаем статистику для логов вместо создания файлов
+        # Получаем статистику для логов
         cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
         appointments_count = cursor.fetchone()[0]
         
         cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users') 
         users_count = cursor.fetchone()[0]
         
+        # 🎯 ПРОВЕРЯЕМ РАЗМЕР БД
+        db_path = get_database_path()
+        if os.path.exists(db_path):
+            size = os.path.getsize(db_path) / (1024 * 1024)  # MB
+            size_info = f"{size:.2f} MB"
+        else:
+            size_info = "файл не найден"
+        
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        logger.info(f"💾 ВИРТУАЛЬНЫЙ БЭКАП [{timestamp}]: {appointments_count} записей, {users_count} пользователей")
+        logger.info(f"💾 ВИРТУАЛЬНЫЙ БЭКАП [{timestamp}]: {appointments_count} записей, {users_count} пользователей, размер: {size_info}")
         
-        # Уведомляем администраторов о статистике вместо файла бэкапа
+        # 🎯 АВТОМАТИЧЕСКАЯ ОЧИСТКА ЕСЛИ БОЛЬШОЙ РАЗМЕР
+        if hasattr(db, 'automatic_cleanup') and size > 8:  # 8MB лимит
+            cleanup_result = db.automatic_cleanup()
+            logger.info(f"🧹 Автоочистка при бэкапе: удалено {cleanup_result['total_deleted']} записей")
+        
+        # Уведомляем администраторов о статистике
         text = (
             f"💾 *Статистика БД на {timestamp}:*\n"
             f"• Записей: {appointments_count}\n"
             f"• Пользователей: {users_count}\n"
-            f"• Render: файловые бэкапы недоступны"
+            f"• Размер БД: {size_info}\n"
+            f"• Render: файловые бэкапы недоступны\n"
+            f"• Данные сохраняются в /tmp/"
         )
         
         notification_chats = db.get_notification_chats()
@@ -3600,13 +3611,10 @@ async def backup_database(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Ошибка создания виртуального бэкапа: {e}")
 
 async def check_database_size(context: ContextTypes.DEFAULT_TYPE):
-    """Проверяет размер и состояние базы данных"""
+    """🎯 УЛУЧШЕННАЯ ПРОВЕРКА РАЗМЕРА БД ДЛЯ RENDER"""
     try:
         # Получаем правильный путь к БД
-        if hasattr(db, 'database_url') and db.database_url.startswith('sqlite:///'):
-            db_path = db.database_url[10:]
-        else:
-            db_path = 'barbershop.db'
+        db_path = get_database_path()  # 🎯 ИСПОЛЬЗУЕМ ФУНКЦИЮ ИЗ database.py
         
         # Проверяем существование файла
         if not os.path.exists(db_path):
@@ -3634,27 +3642,23 @@ async def check_database_size(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"❌ Ошибка проверки целостности: {e}")
         
-        # Автоматическая очистка если БД слишком большая
-        if size > 10:  # 10MB лимит для бесплатного Render
+        # 🎯 АВТОМАТИЧЕСКАЯ ОЧИСТКА ЕСЛИ БД СЛИШКОМ БОЛЬШАЯ
+        if size > 5:  # 5MB лимит для бесплатного Render
             try:
-                cleanup_result = db.cleanup_old_data()
-                logger.info(f"🧹 Автоочистка: {cleanup_result['deleted_users']} пользователей")
+                cleanup_result = db.automatic_cleanup()  # 🎯 ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ
+                logger.info(f"🧹 Автоочистка: удалено {cleanup_result['total_deleted']} записей")
                 
-                # Дополнительная очистка старых записей
-                moscow_time = database.get_moscow_time()
-                old_date = (moscow_time - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
-                cursor = db.execute_with_retry('DELETE FROM appointments WHERE appointment_date < ?', (old_date,))
-                old_appointments = cursor.rowcount
-                db.conn.commit()
-                
-                if old_appointments > 0:
-                    logger.info(f"🧹 Удалено {old_appointments} старых записей (>60 дней)")
+                if cleanup_result['total_deleted'] > 0:
+                    # Проверяем размер после очистки
+                    new_size = os.path.getsize(db_path) / (1024 * 1024)
+                    logger.info(f"📊 Размер БД после очистки: {new_size:.2f} MB")
                     
             except Exception as e:
                 logger.error(f"❌ Ошибка автоочистки: {e}")
         
-        if size > 5:  # Предупреждение если больше 5MB
-            text = f"⚠️ *Размер БД:* {size:.2f} MB\n*Рекомендация:* Очистите старые данные через админ-панель"
+        # Предупреждение если больше 3MB
+        if size > 3:
+            text = f"⚠️ *Размер БД:* {size:.2f} MB\n*Рекомендация:* Автоматическая очистка выполнена"
             notification_chats = db.get_notification_chats()
             for chat_id in notification_chats:
                 try:

@@ -12,11 +12,19 @@ def get_moscow_time():
     """Возвращает текущее московское время (UTC+3)"""
     return datetime.now(timezone(timedelta(hours=3)))
 
+def get_database_path():
+    """ВАЖНО ДЛЯ RENDER: определяет путь к БД"""
+    # На Render файлы сохраняются только в /tmp/
+    if os.path.exists('/tmp'):
+        return '/tmp/barbershop.db'  # 🎯 ИСПРАВЛЕННЫЙ ПУТЬ ДЛЯ RENDER
+    else:
+        return 'barbershop.db'  # Для локальной разработки
+
 class Database:
     def __init__(self):
         self.database_url = config.DATABASE_URL
-        self.max_retries = 3
-        self.retry_delay = 0.1
+        self.max_retries = 5  # 🎯 УВЕЛИЧЕНО ДЛЯ RENDER
+        self.retry_delay = 0.5  # 🎯 УВЕЛИЧЕНО ДЛЯ RENDER
         self.reconnect()
     
     def reconnect(self):
@@ -52,15 +60,15 @@ class Database:
                 raise
 
     def get_connection(self):
-        """Создает соединение с SQLite с оптимизациями"""
+        """🎯 ВАЖНО ДЛЯ RENDER: создает соединение с SQLite в /tmp/"""
         try:
-            if self.database_url.startswith('sqlite:///'):
-                db_path = self.database_url[10:]
-            else:
-                db_path = 'barbershop.db'
+            # 🎯 ИСПРАВЛЕННЫЙ ПУТЬ - используем функцию get_database_path()
+            db_path = get_database_path()
+            
+            logger.info(f"📁 Подключаемся к БД по пути: {db_path}")
             
             # Оптимизации для SQLite
-            conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10.0)
+            conn = sqlite3.connect(db_path, check_same_thread=False, timeout=15.0)  # 🎯 УВЕЛИЧЕН ТАЙМАУТ
             conn.row_factory = sqlite3.Row
             
             # Включаем WAL mode для лучшей производительности
@@ -128,7 +136,7 @@ class Database:
             )
         ''')
 
-        # Таблица scheduled_reminders с исправленной структурой
+        # Таблица scheduled_reminders с исправленной структураой
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS scheduled_reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -675,25 +683,91 @@ class Database:
         }
 
     def cleanup_old_data(self):
-        """Очистка только неактивных пользователей старше 40 дней"""
-        forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor = self.execute_with_retry('''
-            DELETE FROM bot_users 
-            WHERE last_seen < ? 
-            AND user_id NOT IN (
-                SELECT DISTINCT user_id FROM appointments 
-                WHERE user_id IS NOT NULL
-            )
-        ''', (forty_days_ago,))
+        """🎯 УЛУЧШЕННАЯ ОЧИСТКА ДЛЯ RENDER"""
+        try:
+            # Очистка неактивных пользователей старше 40 дней
+            forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM bot_users 
+                WHERE last_seen < ? 
+                AND user_id NOT IN (
+                    SELECT DISTINCT user_id FROM appointments 
+                    WHERE user_id IS NOT NULL
+                )
+            ''', (forty_days_ago,))
 
-        deleted_users = cursor.rowcount
-        self.conn.commit()
+            deleted_users = cursor.rowcount
+            
+            # 🎯 ДОПОЛНИТЕЛЬНО: очистка очень старых записей (>90 дней)
+            ninety_days_ago = (get_moscow_time() - timedelta(days=90)).strftime("%Y-%m-%d")
+            cursor = self.execute_with_retry('''
+                DELETE FROM appointments 
+                WHERE appointment_date < ?
+            ''', (ninety_days_ago,))
+            
+            deleted_old_appointments = cursor.rowcount
+            
+            self.conn.commit()
 
-        logger.info(f"✅ Очистка БД: удалено {deleted_users} неактивных пользователей (>40 дней)")
+            logger.info(f"✅ Очистка БД: удалено {deleted_users} неактивных пользователей (>40 дней) и {deleted_old_appointments} старых записей (>90 дней)")
 
-        return {
-            'deleted_users': deleted_users
-        }
+            return {
+                'deleted_users': deleted_users,
+                'deleted_old_appointments': deleted_old_appointments
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при очистке старых данных: {e}")
+            return {'deleted_users': 0, 'deleted_old_appointments': 0}
+
+    def automatic_cleanup(self):
+        """🎯 НОВАЯ ФУНКЦИЯ: автоматическая очистка для экономии места на Render"""
+        try:
+            logger.info("🧹 Запуск автоматической очистки БД...")
+            
+            # 1. Очистка записей старше 60 дней
+            sixty_days_ago = (get_moscow_time() - timedelta(days=60)).strftime("%Y-%m-%d")
+            cursor = self.execute_with_retry('''
+                DELETE FROM appointments 
+                WHERE appointment_date < ?
+            ''', (sixty_days_ago,))
+            deleted_appointments = cursor.rowcount
+            
+            # 2. Очистка неактивных пользователей старше 90 дней
+            ninety_days_ago = (get_moscow_time() - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM bot_users 
+                WHERE last_seen < ? 
+                AND user_id NOT IN (
+                    SELECT DISTINCT user_id FROM appointments 
+                    WHERE user_id IS NOT NULL
+                )
+            ''', (ninety_days_ago,))
+            deleted_users = cursor.rowcount
+            
+            # 3. Очистка старых напоминаний
+            thirty_days_ago = (get_moscow_time() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM scheduled_reminders 
+                WHERE scheduled_time < ?
+            ''', (thirty_days_ago,))
+            deleted_reminders = cursor.rowcount
+            
+            self.conn.commit()
+            
+            total_deleted = deleted_appointments + deleted_users + deleted_reminders
+            logger.info(f"✅ Автоочистка завершена: удалено {total_deleted} записей")
+            
+            return {
+                'deleted_appointments': deleted_appointments,
+                'deleted_users': deleted_users,
+                'deleted_reminders': deleted_reminders,
+                'total_deleted': total_deleted
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка автоматической очистки: {e}")
+            return {'deleted_appointments': 0, 'deleted_users': 0, 'deleted_reminders': 0, 'total_deleted': 0}
 
     def get_weekly_stats(self):
         """Собирает статистику за прошедшую неделю (только завершенные записи)"""
