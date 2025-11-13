@@ -23,15 +23,6 @@ import config
 import httpx
 import asyncio
 
-def get_database_path():
-    """🎯 ВАЖНО ДЛЯ RENDER: определяет путь к БД"""
-    import os
-    # На Render файлы сохраняются только в /tmp/
-    if os.path.exists('/tmp'):
-        return '/tmp/barbershop.db'
-    else:
-        return 'barbershop.db'
-
 # Настройка логирования
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
@@ -3690,8 +3681,65 @@ async def keep_database_alive(context: ContextTypes.DEFAULT_TYPE):
         except Exception as reconnect_error:
             logger.error(f"❌ Критическая ошибка переподключения: {reconnect_error}")
 
+async def prevent_sleep_mode(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПРЕДОТВРАЩЕНИЕ РЕЖИМА СНА RENDER"""
+    try:
+        # Простая операция для поддержания активности
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments WHERE appointment_date >= DATE("now")')
+        future_appointments = cursor.fetchone()[0]
+        
+        logger.debug(f"🔧 Keep-alive: {future_appointments} будущих записей")
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Keep-alive операция провалилась: {e}")
+        try:
+            db.reconnect()
+            logger.info("✅ Переподключение к БД после keep-alive ошибки")
+        except Exception as reconnect_error:
+            logger.error(f"❌ Критическая ошибка переподключения: {reconnect_error}")
+
+async def scheduled_restart(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК ДЛЯ RENDER (каждые 80 дней)"""
+    try:
+        logger.info("🔄 Запланированный перезапуск для обхода 90-дневного лимита Render...")
+        
+        # Отправляем уведомление администраторам
+        text = "🔄 *Плановый перезапуск бота*\n\nБот будет автоматически перезапущен для поддержания стабильной работы."
+        notification_chats = db.get_notification_chats()
+        for chat_id in notification_chats:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления: {e}")
+        
+        # Аккуратно останавливаем бота
+        await context.application.stop()
+        await context.application.shutdown()
+        
+        # Запускаем новый процесс
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при плановом перезапуске: {e}")
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
+
+    # 🎯 ПЛАНОВЫЙ ПЕРЕЗАПУСК КАЖДЫЕ 80 ДНЕЙ
+    job_queue.run_repeating(
+        scheduled_restart, 
+        interval=6912000,  # 80 дней в секундах
+        first=86400,       # Первый через 24 часа
+        name="scheduled_restart"
+    )
+    
+    # 🎯 ПРЕДОТВРАЩЕНИЕ СНА - КАЖДЫЕ 10 МИНУТ
+    job_queue.run_repeating(
+        prevent_sleep_mode, 
+        interval=600, 
+        first=60, 
+        name="prevent_sleep"
+    )
 
     job_queue.run_once(
         callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
@@ -3735,29 +3783,36 @@ def setup_job_queue(application: Application):
     job_queue.run_once(cleanup_duplicate_reminders, when=10, name="cleanup_duplicate_reminders")
 
 def kill_duplicate_processes():
-    """Убивает дублирующиеся процессы бота"""
+    """🎯 УЛУЧШЕННАЯ ЗАЩИТА ОТ ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ"""
     current_pid = os.getpid()
     current_script = os.path.basename(__file__)
     
     killed_count = 0
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
         try:
             if (proc.info['pid'] != current_pid and 
                 'python' in proc.info['name'].lower() and 
                 proc.info['cmdline'] and 
                 any('bot.py' in cmd for cmd in proc.info['cmdline'] if cmd)):
                 
-                logger.info(f"🔄 Найден дублирующийся процесс PID {proc.info['pid']}, завершаем...")
-                proc.terminate()
-                proc.wait(timeout=5)
-                killed_count += 1
-                logger.info(f"✅ Процесс PID {proc.info['pid']} завершен")
+                # 🎯 УБИВАЕМ ТОЛЬКО СТАРЫЕ ПРОЦЕССЫ
+                current_proc = psutil.Process(current_pid)
+                if proc.info['create_time'] < current_proc.create_time():
+                    logger.info(f"🔄 Найден старый процесс PID {proc.info['pid']}, завершаем...")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                        killed_count += 1
+                        logger.info(f"✅ Процесс PID {proc.info['pid']} завершен")
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                        logger.warning(f"⚠️ Процесс PID {proc.info['pid']} принудительно завершен")
                 
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
             continue
     
     if killed_count > 0:
-        logger.info(f"✅ Завершено {killed_count} дублирующихся процессов")
+        logger.info(f"✅ Завершено {killed_count} старых процессов")
 
 def create_lock_file():
     """Создает файл блокировки для предотвращения дублирующихся запусков"""

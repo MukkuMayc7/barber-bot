@@ -12,12 +12,22 @@ def get_moscow_time():
     """Возвращает текущее московское время (UTC+3)"""
     return datetime.now(timezone(timedelta(hours=3)))
 
+def get_database_path():
+    """🎯 ЕДИНЫЙ ПУТЬ ДЛЯ RENDER"""
+    import os
+    # На Render файлы сохраняются только в /tmp/
+    if os.path.exists('/tmp'):
+        return '/tmp/barbershop.db'
+    else:
+        return 'barbershop.db'
+
 class Database:
     def __init__(self):
         self.database_url = config.DATABASE_URL
         self.max_retries = 3
         self.retry_delay = 0.1
         self.conn = None
+        self.db_path = get_database_path()  # 🎯 Сохраняем единый путь
         self.reconnect()
     
     def reconnect(self):
@@ -30,11 +40,10 @@ class Database:
                     except:
                         pass
                 
-                # 🎯 ИСПРАВЛЕННЫЙ ПУТЬ ДЛЯ RENDER
-                db_path = '/tmp/barbershop.db'
-                logger.info(f"📁 Подключаемся к БД по пути: {db_path}")
+                # 🎯 ИСПОЛЬЗУЕМ ЕДИНЫЙ ПУТЬ
+                logger.info(f"📁 Подключаемся к БД по пути: {self.db_path}")
                 
-                self.conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10.0)
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
                 self.conn.row_factory = sqlite3.Row
                 
                 # Оптимизации для SQLite
@@ -63,6 +72,26 @@ class Database:
                     time.sleep(self.retry_delay)
                     continue
                 raise
+
+    def check_connection(self):
+        """🎯 ПРОСТАЯ ПРОВЕРКА СОЕДИНЕНИЯ БЕЗ РЕКУРСИИ"""
+        try:
+            if not self.conn:
+                self.reconnect()
+                return False
+                
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT 1')
+            cursor.fetchone()
+            return True
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Проверка соединения провалилась: {e}")
+            try:
+                self.reconnect()
+                return True
+            except:
+                return False
 
     def execute_with_retry(self, query, params=()):
         """Выполняет запрос с повторными попытками при блокировке"""
@@ -271,7 +300,60 @@ class Database:
         else:
             logger.info(f"ℹ️ В таблице work_schedule уже есть {count} записей")
 
-    # 🎯 УДАЛИТЬ ФУНКЦИЮ check_connection() - она вызывает рекурсию!
+    def automatic_cleanup(self):
+        """🎯 АВТОМАТИЧЕСКАЯ ОЧИСТКА ДЛЯ RENDER"""
+        try:
+            # Очищаем прошедшие записи (старая функция)
+            cleanup_result = self.cleanup_completed_appointments()
+            
+            # Дополнительно: очищаем очень старые записи (> 30 дней) для экономии места
+            moscow_time = get_moscow_time()
+            cutoff_date_30_days = (moscow_time - timedelta(days=30)).strftime("%Y-%m-%d")
+            
+            cursor = self.execute_with_retry('''
+                DELETE FROM appointments 
+                WHERE appointment_date < ?
+            ''', (cutoff_date_30_days,))
+            deleted_old = cursor.rowcount
+            
+            # Очищаем старые напоминания
+            cutoff_datetime = (moscow_time - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM scheduled_reminders 
+                WHERE sent = TRUE AND scheduled_time < ?
+            ''', (cutoff_datetime,))
+            deleted_reminders = cursor.rowcount
+            
+            # Очищаем неактивных пользователей (не заходили 90 дней)
+            cutoff_users = (moscow_time - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM bot_users 
+                WHERE last_seen < ?
+            ''', (cutoff_users,))
+            deleted_users = cursor.rowcount
+            
+            self.conn.commit()
+            
+            total_deleted = (cleanup_result['total_deleted'] + deleted_old + 
+                            deleted_reminders + deleted_users)
+            
+            logger.info(f"🧹 Автоочистка: удалено {total_deleted} записей "
+                       f"(прошлые: {cleanup_result['total_deleted']}, "
+                       f"старые: {deleted_old}, "
+                       f"напоминания: {deleted_reminders}, "
+                       f"пользователи: {deleted_users})")
+            
+            return {
+                'total_deleted': total_deleted,
+                'deleted_past_appointments': cleanup_result['total_deleted'],
+                'deleted_old_appointments': deleted_old,
+                'deleted_reminders': deleted_reminders,
+                'deleted_users': deleted_users
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка автоматической очистки: {e}")
+            return {'total_deleted': 0}
 
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
         """Добавляет новую запись"""
@@ -676,7 +758,7 @@ class Database:
                 if appointment:
                     self.execute_with_retry('DELETE FROM appointments WHERE id = ?', (appt_id,))
                     self.execute_with_retry('DELETE FROM schedule WHERE date = ? AND time = ?', 
-                              (appointment[4], appointment[5]))
+                              (appt[4], appt[5]))
                     canceled_appointments.append(appointment)
             
             self.conn.commit()
