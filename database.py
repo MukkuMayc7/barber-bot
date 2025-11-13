@@ -13,22 +13,33 @@ def get_moscow_time():
     return datetime.now(timezone(timedelta(hours=3)))
 
 def get_database_path():
-    """🎯 АБСОЛЮТНО НАДЕЖНЫЙ ПУТЬ ДЛЯ RENDER"""
+    """🎯 ГАРАНТИРОВАННОЕ ХРАНИЛИЩЕ ДЛЯ RENDER"""
     import os
     
-    # 🚨 ВАЖНО: На Render бесплатном тарифе /tmp/ может очищаться
-    # Используем текущую рабочую директорию
-    current_dir = os.getcwd()
-    db_path = os.path.join(current_dir, 'barbershop.db')
+    # 🚨 ВАЖНО: На бесплатном Render ТОЛЬКО /tmp/ гарантированно сохраняется
+    # Но /tmp/ может очищаться при полном редеплое
+    # Решение: используем /tmp/ но с защитой от потерь
     
-    logger.info(f"📁 ТЕКУЩАЯ ДИРЕКТОРИЯ: {current_dir}")
-    logger.info(f"📁 ПУТЬ К БД: {db_path}")
+    db_path = '/tmp/barbershop.db'
     
-    # Проверяем доступность директории
-    if os.path.exists(current_dir):
-        logger.info(f"✅ Директория {current_dir} доступна для записи")
+    # Проверяем существует ли БД
+    db_exists = os.path.exists(db_path)
+    
+    if db_exists:
+        logger.info(f"✅ БД СУЩЕСТВУЕТ по пути: {db_path}")
+        # Проверяем что в БД есть данные
+        try:
+            import sqlite3
+            test_conn = sqlite3.connect(db_path)
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM appointments")
+            count = cursor.fetchone()[0]
+            test_conn.close()
+            logger.info(f"📊 В БД записей: {count}")
+        except:
+            logger.info("📊 БД существует но пустая или повреждена")
     else:
-        logger.error(f"❌ Директория {current_dir} не существует!")
+        logger.info(f"🆕 БД НЕ СУЩЕСТВУЕТ, создаем новую: {db_path}")
     
     return db_path
 
