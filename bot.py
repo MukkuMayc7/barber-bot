@@ -1386,6 +1386,7 @@ def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_i
         job_queue = context.job_queue
         removed_count = 0
         
+        # Удаляем 24h напоминание
         job_24h_name = f"24h_reminder_{appointment_id}"
         job_24h = job_queue.get_jobs_by_name(job_24h_name)
         if job_24h:
@@ -1395,6 +1396,7 @@ def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_i
         else:
             logger.info(f"ℹ️ 24h напоминание не найдено для записи #{appointment_id}")
         
+        # Удаляем 1h напоминание
         job_1h_name = f"1h_reminder_{appointment_id}"
         job_1h = job_queue.get_jobs_by_name(job_1h_name)
         if job_1h:
@@ -1404,14 +1406,15 @@ def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_i
         else:
             logger.info(f"ℹ️ 1h напоминание не найдено для записи #{appointment_id}")
             
+        # 🎯 ИСПРАВЛЕННЫЙ SQL-ЗАПРОС (убрал %s, заменил на ?)
         cursor = db.conn.cursor()
         cursor.execute('''
             DELETE FROM scheduled_reminders 
-            WHERE appointment_id = %s AND sent = FALSE
+            WHERE appointment_id = ? AND sent = FALSE
         ''', (appointment_id,))
         db.conn.commit()
         
-        logger.info(f"🎯 Удалено напоминаний: {removed_count}/2 для записи #{appointment_id}")
+        logger.info(f"🎯 Удалено напоминаний из БД для записи #{appointment_id}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении напоминаний для записи #{appointment_id}: {e}")

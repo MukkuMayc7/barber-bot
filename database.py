@@ -589,6 +589,210 @@ class Database:
             'total_deleted': total_deleted
         }
 
+    def check_duplicate_appointments(self):
+        """Проверяет дублирующиеся записи"""
+        try:
+            cursor = self.execute_with_retry('''
+                SELECT appointment_date, appointment_time, COUNT(*) as count
+                FROM appointments 
+                WHERE appointment_date >= DATE('now')
+                GROUP BY appointment_date, appointment_time
+                HAVING COUNT(*) > 1
+                ORDER BY appointment_date, appointment_time
+            ''')
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке дубликатов: {e}")
+            return []
+    
+    def get_appointments_by_datetime(self, date, time):
+        """Получает все записи на указанные дату и время"""
+        try:
+            cursor = self.execute_with_retry('''
+                SELECT id, user_name, phone, service
+                FROM appointments 
+                WHERE appointment_date = ? AND appointment_time = ?
+                ORDER BY id
+            ''', (date, time))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении записей: {e}")
+            return []
+
+    def get_conflicting_appointments(self, weekday, new_start_time, new_end_time, new_is_working):
+        """Находит конфликтующие записи при изменении графика"""
+        try:
+            cursor = self.execute_with_retry('''
+                SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time
+                FROM appointments 
+                WHERE DATE(appointment_date) >= DATE('now')
+                ORDER BY appointment_date, appointment_time
+            ''')
+            
+            all_future_appointments = cursor.fetchall()
+            conflicting_appointments = []
+            
+            for appointment in all_future_appointments:
+                appt_id, user_id, user_name, phone, service, date, time = appointment
+                
+                try:
+                    appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+                    appointment_weekday = appointment_date.weekday()
+                except ValueError:
+                    continue
+                
+                if appointment_weekday == weekday:
+                    if not new_is_working:
+                        conflicting_appointments.append(appointment)
+                    else:
+                        try:
+                            appointment_time = datetime.strptime(time, "%H:%M").time()
+                            new_start = datetime.strptime(new_start_time, "%H:%M").time()
+                            new_end = datetime.strptime(new_end_time, "%H:%M").time()
+                            
+                            if appointment_time < new_start or appointment_time >= new_end:
+                                conflicting_appointments.append(appointment)
+                        except ValueError:
+                            continue
+            
+            return conflicting_appointments
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при поиске конфликтующих записей: {e}")
+            return []
+
+    def cancel_appointments_by_ids(self, appointment_ids):
+        """Массово отменяет записи по списку ID"""
+        try:
+            canceled_appointments = []
+            
+            for appt_id in appointment_ids:
+                cursor = self.execute_with_retry('''
+                    SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
+                    FROM appointments WHERE id = ?
+                ''', (appt_id,))
+                appointment = cursor.fetchone()
+                
+                if appointment:
+                    self.execute_with_retry('DELETE FROM appointments WHERE id = ?', (appt_id,))
+                    self.execute_with_retry('DELETE FROM schedule WHERE date = ? AND time = ?', 
+                              (appointment[4], appointment[5]))
+                    canceled_appointments.append(appointment)
+            
+            self.conn.commit()
+            return canceled_appointments
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при массовой отмене записей: {e}")
+            return []
+
+    def add_admin(self, admin_id, username, first_name, last_name, added_by):
+        """Добавляет администратора"""
+        try:
+            cursor = self.execute_with_retry('''
+                INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(admin_id) DO NOTHING
+            ''', (admin_id, username, first_name, last_name, added_by))
+            self.conn.commit()
+            
+            added = cursor.rowcount > 0
+            return added
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при добавлении администратора: {e}")
+            self.conn.rollback()
+            return False
+
+    def remove_admin(self, admin_id):
+        """Удаляет администратора"""
+        try:
+            if hasattr(config, 'PROTECTED_ADMINS') and admin_id in config.PROTECTED_ADMINS:
+                return False
+                
+            cursor = self.execute_with_retry('DELETE FROM bot_admins WHERE admin_id = ?', (admin_id,))
+            self.conn.commit()
+            
+            deleted = cursor.rowcount > 0
+            return deleted
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при удалении администратора: {e}")
+            self.conn.rollback()
+            return False
+
+    def get_all_admins(self):
+        """Возвращает список всех администраторов"""
+        try:
+            cursor = self.execute_with_retry('''
+                SELECT admin_id, username, first_name, last_name, added_at, added_by 
+                FROM bot_admins 
+                ORDER BY added_at DESC
+            ''')
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении списка администраторов: {e}")
+            return []
+
+    def get_admin_info(self, admin_id):
+        """Получает информацию об администраторе"""
+        try:
+            cursor = self.execute_with_retry('''
+                SELECT admin_id, username, first_name, last_name, added_at, added_by
+                FROM bot_admins WHERE admin_id = ?
+            ''', (admin_id,))
+            return cursor.fetchone()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении информации об администраторе: {e}")
+            return None
+
+    def get_weekly_stats(self):
+        """Собирает статистику за прошедшую неделю"""
+        try:
+            end_date = get_moscow_time().date()
+            start_date = end_date - timedelta(days=7)
+            
+            cursor = self.execute_with_retry('''
+                SELECT COUNT(*) 
+                FROM appointments 
+                WHERE appointment_date >= ? AND appointment_date < ?
+            ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+            total_appointments = cursor.fetchone()[0]
+            
+            cursor = self.execute_with_retry('''
+                SELECT appointment_time, COUNT(*) as count
+                FROM appointments 
+                WHERE appointment_date >= ? AND appointment_date < ?
+                GROUP BY appointment_time 
+                ORDER BY count DESC 
+                LIMIT 1
+            ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+            peak_time_result = cursor.fetchone()
+            peak_time = peak_time_result[0] if peak_time_result else "Нет данных"
+            peak_time_count = peak_time_result[1] if peak_time_result else 0
+            
+            return {
+                'start_date': start_date.strftime("%d.%m.%Y"),
+                'end_date': (end_date - timedelta(days=1)).strftime("%d.%m.%Y"),
+                'total_appointments': total_appointments,
+                'peak_time': peak_time,
+                'peak_time_count': peak_time_count,
+                'new_clients': 0,  # Упростим для начала
+                'regular_clients': 0
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при сборе статистики: {e}")
+            return {
+                'start_date': '',
+                'end_date': '',
+                'total_appointments': 0,
+                'peak_time': "Нет данных",
+                'peak_time_count': 0,
+                'new_clients': 0,
+                'regular_clients': 0
+            }
+
     def __del__(self):
         """Закрывает соединение при удалении объекта"""
         if self.conn:
