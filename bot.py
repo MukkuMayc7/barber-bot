@@ -3725,6 +3725,13 @@ async def scheduled_restart(context: ContextTypes.DEFAULT_TYPE):
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
+    # 🎯 ПРОВЕРКА БД ПРИ ЗАПУСКЕ
+    job_queue.run_once(
+        callback=lambda context: asyncio.create_task(check_database_status(context)),
+        when=10,  # Через 10 секунд после запуска
+        name="check_db_status"
+    )
+
     # 🎯 ПЛАНОВЫЙ ПЕРЕЗАПУСК КАЖДЫЕ 80 ДНЕЙ
     job_queue.run_repeating(
         scheduled_restart, 
@@ -3839,6 +3846,47 @@ def create_lock_file():
     except (IOError, OSError):
         logger.error("❌ Бот уже запущен! Завершите предыдущий процесс перед запуском нового.")
         return False
+
+async def check_database_status(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПРОВЕРКА СОСТОЯНИЯ БАЗЫ ДАННЫХ"""
+    try:
+        # Проверяем существование файла БД
+        db_path = get_database_path()
+        db_exists = os.path.exists(db_path)
+        
+        # Получаем статистику
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+        appointments_count = cursor.fetchone()[0]
+        
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+        users_count = cursor.fetchone()[0]
+        
+        # Логируем информацию
+        logger.info(f"🔍 ДИАГНОСТИКА БД:")
+        logger.info(f"   📁 Путь: {db_path}")
+        logger.info(f"   ✅ Файл существует: {db_exists}")
+        logger.info(f"   📊 Записей: {appointments_count}")
+        logger.info(f"   👥 Пользователей: {users_count}")
+        
+        # Отправляем уведомление администраторам
+        if context:
+            text = (
+                f"🔍 *Диагностика БД после перезапуска:*\n"
+                f"• Файл БД: {'✅ Существует' if db_exists else '❌ Отсутствует'}\n"
+                f"• Путь: `{db_path}`\n"
+                f"• Записей: {appointments_count}\n"
+                f"• Пользователей: {users_count}"
+            )
+            
+            notification_chats = db.get_notification_chats()
+            for chat_id in notification_chats:
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+                except Exception as e:
+                    logger.error(f"Ошибка отправки диагностики: {e}")
+                    
+    except Exception as e:
+        logger.error(f"❌ Ошибка диагностики БД: {e}")
 
 def main():
     """Главная функция с улучшенной обработкой ошибок и защитой от конфликтов"""

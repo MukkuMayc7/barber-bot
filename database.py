@@ -13,13 +13,23 @@ def get_moscow_time():
     return datetime.now(timezone(timedelta(hours=3)))
 
 def get_database_path():
-    """🎯 ЕДИНЫЙ ПУТЬ ДЛЯ RENDER"""
+    """🎯 УЛУЧШЕННЫЙ ПУТЬ ДЛЯ RENDER"""
     import os
-    # На Render файлы сохраняются только в /tmp/
-    if os.path.exists('/tmp'):
-        return '/tmp/barbershop.db'
-    else:
-        return 'barbershop.db'
+    # Пробуем несколько возможных путей
+    possible_paths = [
+        '/tmp/barbershop.db',      # Основной путь Render
+        '/var/tmp/barbershop.db',  # Альтернативный путь
+        './barbershop.db'          # Локальный путь (на всякий случай)
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(os.path.dirname(path)):
+            logger.info(f"📁 Используем путь к БД: {path}")
+            return path
+    
+    # Если ничего не найдено, используем /tmp/
+    logger.info("📁 Используем путь по умолчанию: /tmp/barbershop.db")
+    return '/tmp/barbershop.db'
 
 class Database:
     def __init__(self):
