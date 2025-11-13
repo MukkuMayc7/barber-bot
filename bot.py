@@ -3547,6 +3547,142 @@ async def debug_timezones(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка в debug_timezones: {e}")
 
+async def optimize_database(context: ContextTypes.DEFAULT_TYPE):
+    """Регулярная оптимизация SQLite базы"""
+    try:
+        # ПЕРЕД каждой операцией проверяем соединение
+        db.check_connection()
+        cursor = db.execute_with_retry('PRAGMA optimize')
+        db.conn.commit()
+        logger.info("✅ База данных оптимизирована")
+    except Exception as e:
+        logger.error(f"❌ Ошибка оптимизации БД: {e}")
+        # Пытаемся восстановить соединение
+        try:
+            db.reconnect()
+        except:
+            pass
+
+async def backup_database(context: ContextTypes.DEFAULT_TYPE):
+    """Создает резервную копию базы данных - ТОЛЬКО В ПАМЯТИ для Render"""
+    try:
+        # НА RENDER ФАЙЛОВАЯ СИСТЕМА ВРЕМЕННАЯ!
+        # Бэкапы будут удаляться при перезапуске, поэтому просто логируем
+        import datetime
+        
+        # Получаем статистику для логов вместо создания файлов
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+        appointments_count = cursor.fetchone()[0]
+        
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users') 
+        users_count = cursor.fetchone()[0]
+        
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        logger.info(f"💾 ВИРТУАЛЬНЫЙ БЭКАП [{timestamp}]: {appointments_count} записей, {users_count} пользователей")
+        
+        # Уведомляем администраторов о статистике вместо файла бэкапа
+        text = (
+            f"💾 *Статистика БД на {timestamp}:*\n"
+            f"• Записей: {appointments_count}\n"
+            f"• Пользователей: {users_count}\n"
+            f"• Render: файловые бэкапы недоступны"
+        )
+        
+        notification_chats = db.get_notification_chats()
+        for chat_id in notification_chats:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Ошибка отправки статистики: {e}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания виртуального бэкапа: {e}")
+
+async def check_database_size(context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет размер и состояние базы данных"""
+    try:
+        # Получаем правильный путь к БД
+        if hasattr(db, 'database_url') and db.database_url.startswith('sqlite:///'):
+            db_path = db.database_url[10:]
+        else:
+            db_path = 'barbershop.db'
+        
+        # Проверяем существование файла
+        if not os.path.exists(db_path):
+            logger.error(f"❌ Файл БД не найден: {db_path}")
+            # Пытаемся пересоздать таблицы
+            try:
+                db.create_tables()
+                logger.info("✅ Таблицы БД пересозданы")
+            except Exception as e:
+                logger.error(f"❌ Ошибка пересоздания таблиц: {e}")
+            return
+        
+        # Проверяем размер
+        size = os.path.getsize(db_path) / (1024 * 1024)  # Размер в MB
+        logger.info(f"📊 Размер базы данных: {size:.2f} MB")
+        
+        # Проверяем целостность БД
+        try:
+            cursor = db.execute_with_retry('PRAGMA integrity_check')
+            integrity = cursor.fetchone()[0]
+            if integrity == 'ok':
+                logger.info("✅ Целостность БД: OK")
+            else:
+                logger.error(f"❌ Проблемы с целостностью БД: {integrity}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки целостности: {e}")
+        
+        # Автоматическая очистка если БД слишком большая
+        if size > 10:  # 10MB лимит для бесплатного Render
+            try:
+                cleanup_result = db.cleanup_old_data()
+                logger.info(f"🧹 Автоочистка: {cleanup_result['deleted_users']} пользователей")
+                
+                # Дополнительная очистка старых записей
+                moscow_time = database.get_moscow_time()
+                old_date = (moscow_time - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+                cursor = db.execute_with_retry('DELETE FROM appointments WHERE appointment_date < ?', (old_date,))
+                old_appointments = cursor.rowcount
+                db.conn.commit()
+                
+                if old_appointments > 0:
+                    logger.info(f"🧹 Удалено {old_appointments} старых записей (>60 дней)")
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка автоочистки: {e}")
+        
+        if size > 5:  # Предупреждение если больше 5MB
+            text = f"⚠️ *Размер БД:* {size:.2f} MB\n*Рекомендация:* Очистите старые данные через админ-панель"
+            notification_chats = db.get_notification_chats()
+            for chat_id in notification_chats:
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка отправки уведомления: {e}")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки БД: {e}")
+
+async def keep_database_alive(context: ContextTypes.DEFAULT_TYPE):
+    """Поддерживает соединение с БД активным на Render"""
+    try:
+        # Простой запрос чтобы БД не "засыпала"
+        cursor = db.execute_with_retry('SELECT 1')
+        logger.debug("✅ Соединение с БД активно")
+    except Exception as e:
+        logger.warning(f"⚠️ Проблема с соединением БД, переподключаемся: {e}")
+        try:
+            db.reconnect()
+            logger.info("✅ Переподключение к БД успешно")
+        except Exception as reconnect_error:
+            logger.error(f"❌ Критическая ошибка переподключения: {reconnect_error}")
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
@@ -3556,10 +3692,22 @@ def setup_job_queue(application: Application):
         name="restore_reminders"
     )
     
-    # УБИРАЕМ отладочные задачи
-    # job_queue.run_repeating(debug_jobs, interval=300, first=10, name="debug_jobs")
-    # job_queue.run_repeating(debug_timezones, interval=3600, first=30, name="debug_timezones")
+    job_queue.run_repeating(optimize_database, interval=3600, first=60, name="optimize_db")
+    job_queue.run_daily(backup_database, time=datetime.strptime("03:00", "%H:%M").time(), name="backup_db")
+    job_queue.run_daily(check_database_size, time=datetime.strptime("12:00", "%H:%M").time(), name="check_db_size")
+
+    # ★★★ ВАЖНО: Поддержание активности БД на Render ★★★
+    job_queue.run_repeating(keep_database_alive, interval=300, first=30, name="keep_db_alive")     # Каждые 5 минут
+
+    # Оптимизация БД каждый час
+    job_queue.run_repeating(optimize_database, interval=3600, first=3600, name="optimize_db")
     
+    # Резервное копирование каждый день в 3:00 UTC (6:00 MSK)
+    job_queue.run_daily(backup_database, time=datetime.strptime("03:00", "%H:%M").time(), name="backup_db")
+    
+    # Проверка размера БД каждый день
+    job_queue.run_daily(check_database_size, time=datetime.strptime("12:00", "%H:%M").time(), name="check_db_size")
+
     # ИСПРАВЛЕННЫЕ ВРЕМЕНА (в UTC):
     
     # 06:00 UTC = 09:00 MSK - Ежедневное расписание администраторам

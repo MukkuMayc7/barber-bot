@@ -78,18 +78,19 @@ class Database:
         """Выполняет запрос с повторными попытками при блокировке"""
         for attempt in range(self.max_retries):
             try:
+                self.check_connection()  # Добавляем проверку соединения
                 cursor = self.conn.cursor()
                 cursor.execute(query, params)
                 return cursor
             except sqlite3.OperationalError as e:
                 if "locked" in str(e) and attempt < self.max_retries - 1:
                     logger.warning(f"⚠️ База заблокирована, повторная попытка {attempt + 1}")
-                    time.sleep(self.retry_delay)
+                    time.sleep(self.retry_delay * (attempt + 1))  # Увеличиваем задержку
                     continue
                 raise
-            except Exception as e:
-                logger.error(f"❌ Ошибка выполнения запроса: {e}")
-                self.check_connection()  # Переподключаемся при других ошибках
+            except sqlite3.DatabaseError as e:
+                logger.error(f"❌ Ошибка базы данных, переподключаемся: {e}")
+                self.reconnect()
                 if attempt < self.max_retries - 1:
                     time.sleep(self.retry_delay)
                     continue
