@@ -5,4 +5,4 @@ requests==2.31.0
 httpx==0.27.0
 psutil==5.9.6
 waitress==2.1.2
-# УБРАН psycopg - используем SQLite
+aiosqlite==0.19.0

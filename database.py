@@ -2,6 +2,7 @@
 import os
 import logging
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 import config
 
@@ -14,38 +15,85 @@ def get_moscow_time():
 class Database:
     def __init__(self):
         self.database_url = config.DATABASE_URL
+        self.max_retries = 3
+        self.retry_delay = 0.1
         self.reconnect()
     
     def reconnect(self):
-        """Переподключается к базе данных"""
-        if hasattr(self, 'conn') and self.conn:
+        """Переподключается к базе данных с повторными попытками"""
+        for attempt in range(self.max_retries):
             try:
-                self.conn.close()
-            except:
-                pass
-        self.conn = self.get_connection()
-        self.create_tables()
-        self.update_database_structure()
-        self.create_admin_tables()
-        self.setup_default_notifications()
-        self.setup_default_schedule()
+                if hasattr(self, 'conn') and self.conn:
+                    try:
+                        self.conn.close()
+                    except:
+                        pass
+                
+                self.conn = self.get_connection()
+                self.create_tables()
+                self.update_database_structure()
+                self.create_admin_tables()
+                self.setup_default_notifications()
+                self.setup_default_schedule()
+                logger.info("✅ Успешное подключение к SQLite")
+                return
+                
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e) and attempt < self.max_retries - 1:
+                    logger.warning(f"⚠️ База данных заблокирована, попытка {attempt + 1}/{self.max_retries}")
+                    time.sleep(self.retry_delay)
+                    continue
+                raise
+            except Exception as e:
+                logger.error(f"❌ Ошибка подключения к SQLite: {e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                    continue
+                raise
 
     def get_connection(self):
-        """Создает соединение с SQLite"""
+        """Создает соединение с SQLite с оптимизациями"""
         try:
-            # Извлекаем путь к файлу из DATABASE_URL
             if self.database_url.startswith('sqlite:///'):
-                db_path = self.database_url[10:]  # убираем 'sqlite:///'
+                db_path = self.database_url[10:]
             else:
                 db_path = 'barbershop.db'
             
-            conn = sqlite3.connect(db_path, check_same_thread=False)
-            conn.row_factory = sqlite3.Row  # Для доступа к колонкам по имени
-            logger.info("✅ Успешное подключение к SQLite")
+            # Оптимизации для SQLite
+            conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10.0)
+            conn.row_factory = sqlite3.Row
+            
+            # Включаем WAL mode для лучшей производительности
+            conn.execute('PRAGMA journal_mode=WAL')
+            conn.execute('PRAGMA synchronous=NORMAL')
+            conn.execute('PRAGMA cache_size=-64000')  # 64MB кэш
+            conn.execute('PRAGMA foreign_keys=ON')
+            
             return conn
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к SQLite: {e}")
             raise
+
+    def execute_with_retry(self, query, params=()):
+        """Выполняет запрос с повторными попытками при блокировке"""
+        for attempt in range(self.max_retries):
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(query, params)
+                return cursor
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e) and attempt < self.max_retries - 1:
+                    logger.warning(f"⚠️ База заблокирована, повторная попытка {attempt + 1}")
+                    time.sleep(self.retry_delay)
+                    continue
+                raise
+            except Exception as e:
+                logger.error(f"❌ Ошибка выполнения запроса: {e}")
+                self.check_connection()  # Переподключаемся при других ошибках
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                    continue
+                raise
 
     def create_tables(self):
         """Создает все необходимые таблицы с новой структурой"""
@@ -278,8 +326,7 @@ class Database:
     def check_connection(self):
         """Проверяет соединение с БД и переподключается при необходимости"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT 1')
+            cursor = self.execute_with_retry('SELECT 1')
             return True
         except Exception as e:
             logger.warning(f"⚠️ Соединение с БД разорвано, переподключаемся: {e}")
@@ -289,13 +336,10 @@ class Database:
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
         """Добавляет новую запись с переподключением"""
         try:
-            # Проверяем соединение перед запросом
             self.check_connection()
             
-            cursor = self.conn.cursor()
-            
             # Проверяем, не занято ли время
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 SELECT COUNT(*) FROM appointments 
                 WHERE appointment_date = ? AND appointment_time = ?
             ''', (date, time))
@@ -304,7 +348,7 @@ class Database:
                 raise Exception("Это время уже занято другим клиентом")
             
             # Добавляем запись
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (user_id, user_name, user_username, phone, service, date, time))
@@ -312,7 +356,7 @@ class Database:
             appointment_id = cursor.lastrowid
             
             # Обновляем расписание
-            cursor.execute('''
+            self.execute_with_retry('''
                 INSERT INTO schedule (date, time, available)
                 VALUES (?, ?, ?)
                 ON CONFLICT(date, time) DO UPDATE SET 
@@ -324,52 +368,15 @@ class Database:
             
         except Exception as e:
             logger.error(f"❌ Ошибка БД в add_appointment: {e}")
-            # Пытаемся переподключиться и повторить
             self.reconnect()
-            try:
-                cursor = self.conn.cursor()
-                
-                # Повторяем проверку занятости
-                cursor.execute('''
-                    SELECT COUNT(*) FROM appointments 
-                    WHERE appointment_date = ? AND appointment_time = ?
-                ''', (date, time))
-                
-                if cursor.fetchone()[0] > 0:
-                    raise Exception("Это время уже занято другим клиентом")
-                
-                # Повторяем добавление записи
-                cursor.execute('''
-                    INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (user_id, user_name, user_username, phone, service, date, time))
-                
-                appointment_id = cursor.lastrowid
-                
-                # Повторяем обновление расписания
-                cursor.execute('''
-                    INSERT INTO schedule (date, time, available)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(date, time) DO UPDATE SET 
-                    available = excluded.available
-                ''', (date, time, False))
-                
-                self.conn.commit()
-                logger.info("✅ Успешное переподключение к БД в add_appointment")
-                return appointment_id
-                
-            except Exception as e2:
-                logger.error(f"❌ Критическая ошибка БД после переподключения в add_appointment: {e2}")
-                raise e2
+            raise
 
     def add_or_update_user(self, user_id, username, first_name, last_name):
         """Добавляет или обновляет пользователя с переподключением"""
         try:
-            # Проверяем соединение перед запросом
             self.check_connection()
             
-            cursor = self.conn.cursor()
-            cursor.execute('''
+            self.execute_with_retry('''
                 INSERT INTO bot_users (user_id, username, first_name, last_name, last_seen)
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(user_id) DO UPDATE SET
@@ -378,15 +385,14 @@ class Database:
                 last_name = excluded.last_name,
                 last_seen = excluded.last_seen
             ''', (user_id, username, first_name, last_name))
+            
             self.conn.commit()
         except Exception as e:
             logger.error(f"❌ Ошибка БД в add_or_update_user: {e}")
-            # Пытаемся переподключиться
             self.reconnect()
-            # Повторяем запрос после переподключения
+            # Повторяем после переподключения
             try:
-                cursor = self.conn.cursor()
-                cursor.execute('''
+                self.execute_with_retry('''
                     INSERT INTO bot_users (user_id, username, first_name, last_name, last_seen)
                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(user_id) DO UPDATE SET
@@ -396,18 +402,15 @@ class Database:
                     last_seen = excluded.last_seen
                 ''', (user_id, username, first_name, last_name))
                 self.conn.commit()
-                logger.info("✅ Успешное переподключение к БД в add_or_update_user")
             except Exception as e2:
-                logger.error(f"❌ Критическая ошибка БД после переподключения: {e2}")
+                logger.error(f"❌ Критическая ошибка после переподключения: {e2}")
 
     def is_admin(self, user_id):
-        """Проверяет, является ли пользователь администратором с переподключением"""
+        """Проверяет, является ли пользователь администратором"""
         try:
-            # Проверяем соединение перед запросом
             self.check_connection()
             
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT 1 FROM bot_admins WHERE admin_id = ?', (user_id,))
+            cursor = self.execute_with_retry('SELECT 1 FROM bot_admins WHERE admin_id = ?', (user_id,))
             result = cursor.fetchone() is not None
             if result:
                 logger.info(f"🔐 Admin access granted for user_id: {user_id}")
@@ -416,14 +419,9 @@ class Database:
             logger.error(f"❌ Ошибка при проверке прав администратора для {user_id}: {e}")
             return False
 
-    # ОСТАЛЬНЫЕ МЕТОДЫ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ (только заменяем %s на ?)
-    
     def get_available_slots(self, date):
         """Получает доступные временные слоты"""
-        cursor = self.conn.cursor()
-        
-        # Получаем занятые времена
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT time FROM schedule 
             WHERE date = ? AND available = FALSE
         ''', (date,))
@@ -432,7 +430,7 @@ class Database:
         # Получаем график работы
         date_obj = datetime.strptime(date, "%Y-%m-%d").date()
         weekday = date_obj.weekday()
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT start_time, end_time, is_working FROM work_schedule 
             WHERE weekday = ?
         ''', (weekday,))
@@ -461,8 +459,7 @@ class Database:
 
     def set_work_schedule(self, weekday, start_time, end_time, is_working=True):
         """Устанавливает график работы"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             INSERT INTO work_schedule (weekday, start_time, end_time, is_working)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(weekday) DO UPDATE SET
@@ -476,15 +473,13 @@ class Database:
 
     def get_work_schedule(self, weekday=None):
         """Получает график работы"""
-        cursor = self.conn.cursor()
-        
         if weekday is not None:
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 SELECT id, weekday, start_time, end_time, is_working 
                 FROM work_schedule WHERE weekday = ?
             ''', (weekday,))
         else:
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 SELECT id, weekday, start_time, end_time, is_working 
                 FROM work_schedule ORDER BY weekday
             ''')
@@ -504,12 +499,11 @@ class Database:
 
     def get_user_appointments(self, user_id):
         """Получает только будущие записи пользователя"""
-        cursor = self.conn.cursor()
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
     
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT id, service, appointment_date, appointment_time 
             FROM appointments 
             WHERE user_id = ? AND (
@@ -523,13 +517,11 @@ class Database:
 
     def get_all_appointments(self):
         """Получает только БУДУЩИЕ записи"""
-        cursor = self.conn.cursor()
-    
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
     
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT id, user_name, user_username, phone, service, appointment_date, appointment_time 
             FROM appointments 
             WHERE appointment_date > ? OR 
@@ -541,11 +533,10 @@ class Database:
 
     def get_today_appointments(self):
         """Получает записи на сегодня"""
-        cursor = self.conn.cursor()
         moscow_time = get_moscow_time()
         today = moscow_time.strftime("%Y-%m-%d")
         
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT user_name, phone, service, appointment_time 
             FROM appointments 
             WHERE appointment_date = ?
@@ -556,10 +547,8 @@ class Database:
 
     def cancel_appointment(self, appointment_id, user_id=None):
         """Отменяет запись"""
-        cursor = self.conn.cursor()
-        
         # Получаем информацию о записи
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
             FROM appointments WHERE id = ?
         ''', (appointment_id,))
@@ -570,19 +559,19 @@ class Database:
         
         # Удаляем запись
         if user_id:
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 DELETE FROM appointments 
                 WHERE id = ? AND user_id = ?
             ''', (appointment_id, user_id))
         else:
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 DELETE FROM appointments WHERE id = ?
             ''', (appointment_id,))
         
         if cursor.rowcount > 0:
             user_id, user_name, phone, service, date, time = appointment
             # Освобождаем время в расписании
-            cursor.execute('''
+            self.execute_with_retry('''
                 DELETE FROM schedule WHERE date = ? AND time = ?
             ''', (date, time))
             
@@ -592,8 +581,7 @@ class Database:
 
     def mark_24h_reminder_sent(self, appointment_id):
         """Отмечает 24-часовое напоминание как отправленное"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             UPDATE appointments 
             SET reminder_24h_sent = TRUE 
             WHERE id = ?
@@ -602,8 +590,7 @@ class Database:
 
     def mark_1h_reminder_sent(self, appointment_id):
         """Отмечает 1-часовое напоминание как отправленное"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             UPDATE appointments 
             SET reminder_1h_sent = TRUE 
             WHERE id = ?
@@ -612,8 +599,7 @@ class Database:
 
     def set_notification_chat(self, admin_id, chat_id):
         """Устанавливает чат для уведомлений"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             INSERT INTO admin_settings (admin_id, notification_chat_id)
             VALUES (?, ?)
             ON CONFLICT(admin_id) DO UPDATE SET
@@ -623,21 +609,18 @@ class Database:
 
     def get_notification_chats(self):
         """Получает все чаты для уведомлений"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT DISTINCT notification_chat_id FROM admin_settings')
+        cursor = self.execute_with_retry('SELECT DISTINCT notification_chat_id FROM admin_settings')
         return [row[0] for row in cursor.fetchall() if row[0] is not None]
 
     def get_total_users_count(self):
         """Получает общее количество пользователей"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM bot_users')
+        cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
         return cursor.fetchone()[0]
 
     def get_active_users_count(self, days=30):
         """Получает количество активных пользователей"""
-        cursor = self.conn.cursor()
         cutoff_date = (get_moscow_time() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT COUNT(*) FROM bot_users 
             WHERE last_seen >= ?
         ''', (cutoff_date,))
@@ -645,14 +628,12 @@ class Database:
 
     def cleanup_completed_appointments(self):
         """Очищает прошедшие записи в московском времени"""
-        cursor = self.conn.cursor()
-
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
         
         # Удаляем записи за прошлые даты
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             DELETE FROM appointments 
             WHERE appointment_date < ?
         ''', (current_date,))
@@ -660,7 +641,7 @@ class Database:
         deleted_past_dates = cursor.rowcount
         
         # Удаляем прошедшие записи за сегодня
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             DELETE FROM appointments 
             WHERE appointment_date = ? 
             AND appointment_time < ?
@@ -669,12 +650,12 @@ class Database:
         deleted_today = cursor.rowcount
         
         # Очищаем расписание
-        cursor.execute('''
+        self.execute_with_retry('''
             DELETE FROM schedule 
             WHERE date < ?
         ''', (current_date,))
         
-        cursor.execute('''
+        self.execute_with_retry('''
             DELETE FROM schedule 
             WHERE date = ? AND time < ?
         ''', (current_date, current_time))
@@ -694,10 +675,8 @@ class Database:
 
     def cleanup_old_data(self):
         """Очистка только неактивных пользователей старше 40 дней"""
-        cursor = self.conn.cursor()
-    
         forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             DELETE FROM bot_users 
             WHERE last_seen < ? 
             AND user_id NOT IN (
@@ -705,26 +684,23 @@ class Database:
                 WHERE user_id IS NOT NULL
             )
         ''', (forty_days_ago,))
-    
+
         deleted_users = cursor.rowcount
-    
         self.conn.commit()
-    
+
         logger.info(f"✅ Очистка БД: удалено {deleted_users} неактивных пользователей (>40 дней)")
-    
+
         return {
             'deleted_users': deleted_users
         }
 
     def get_weekly_stats(self):
         """Собирает статистику за прошедшую неделю (только завершенные записи)"""
-        cursor = self.conn.cursor()
-        
         end_date = get_moscow_time().date()
         start_date = end_date - timedelta(days=7)
         
         # 1. Общее количество завершенных записей
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT COUNT(*) 
             FROM appointments 
             WHERE appointment_date >= ? AND appointment_date < ?
@@ -732,7 +708,7 @@ class Database:
         total_appointments = cursor.fetchone()[0]
         
         # 2. Пиковое время (самое популярное время записи)
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT appointment_time, COUNT(*) as count
             FROM appointments 
             WHERE appointment_date >= ? AND appointment_date < ?
@@ -745,7 +721,7 @@ class Database:
         peak_time_count = peak_time_result[1] if peak_time_result else 0
         
         # 3. Новые клиенты (впервые записавшиеся за период)
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT COUNT(DISTINCT user_id) 
             FROM appointments 
             WHERE appointment_date >= ? AND appointment_date < ?
@@ -759,7 +735,7 @@ class Database:
         new_clients = cursor.fetchone()[0]
         
         # 4. Постоянные клиенты (уже записывавшиеся ранее)
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT COUNT(DISTINCT user_id) 
             FROM appointments 
             WHERE appointment_date >= ? AND appointment_date < ?
@@ -784,9 +760,7 @@ class Database:
 
     def get_conflicting_appointments(self, weekday, new_start_time, new_end_time, new_is_working):
         """Находит конфликтующие записи при изменении графика"""
-        cursor = self.conn.cursor()
-        
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT id, user_id, user_name, phone, service, appointment_date, appointment_time
             FROM appointments 
             WHERE DATE(appointment_date) >= DATE('now')
@@ -828,19 +802,18 @@ class Database:
 
     def cancel_appointments_by_ids(self, appointment_ids):
         """Массово отменяет записи по списку ID"""
-        cursor = self.conn.cursor()
         canceled_appointments = []
     
         for appt_id in appointment_ids:
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
                 FROM appointments WHERE id = ?
             ''', (appt_id,))
             appointment = cursor.fetchone()
         
             if appointment:
-                cursor.execute('DELETE FROM appointments WHERE id = ?', (appt_id,))
-                cursor.execute('DELETE FROM schedule WHERE date = ? AND time = ?', 
+                self.execute_with_retry('DELETE FROM appointments WHERE id = ?', (appt_id,))
+                self.execute_with_retry('DELETE FROM schedule WHERE date = ? AND time = ?', 
                           (appointment[4], appointment[5]))
                 canceled_appointments.append(appointment)
                 logger.info(f"Отменена запись #{appt_id} для {appointment[1]}")
@@ -852,8 +825,7 @@ class Database:
     def add_admin(self, admin_id, username, first_name, last_name, added_by):
         """Добавляет администратора"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(admin_id) DO NOTHING
@@ -880,8 +852,7 @@ class Database:
                 logger.warning(f"🚫 Попытка удалить защищенного администратора {admin_id}")
                 return False
                 
-            cursor = self.conn.cursor()
-            cursor.execute('DELETE FROM bot_admins WHERE admin_id = ?', (admin_id,))
+            cursor = self.execute_with_retry('DELETE FROM bot_admins WHERE admin_id = ?', (admin_id,))
             self.conn.commit()
             
             deleted = cursor.rowcount > 0
@@ -900,8 +871,7 @@ class Database:
     def get_all_admins(self):
         """Возвращает список всех администраторов"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('''
+            cursor = self.execute_with_retry('''
                 SELECT admin_id, username, first_name, last_name, added_at, added_by 
                 FROM bot_admins 
                 ORDER BY added_at DESC
@@ -915,12 +885,33 @@ class Database:
 
     def get_admin_info(self, admin_id):
         """Получает информацию об администраторе"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
+        cursor = self.execute_with_retry('''
             SELECT admin_id, username, first_name, last_name, added_at, added_by
             FROM bot_admins WHERE admin_id = ?
         ''', (admin_id,))
         return cursor.fetchone()
+
+    def check_duplicate_appointments(self):
+        """Проверяет дублирующиеся записи"""
+        cursor = self.execute_with_retry('''
+            SELECT appointment_date, appointment_time, COUNT(*) as count
+            FROM appointments 
+            WHERE appointment_date >= DATE('now')
+            GROUP BY appointment_date, appointment_time
+            HAVING COUNT(*) > 1
+            ORDER BY appointment_date, appointment_time
+        ''')
+        return cursor.fetchall()
+
+    def get_appointments_by_datetime(self, date, time):
+        """Получает все записи на указанные дату и время"""
+        cursor = self.execute_with_retry('''
+            SELECT id, user_name, phone, service
+            FROM appointments 
+            WHERE appointment_date = ? AND appointment_time = ?
+            ORDER BY id
+        ''', (date, time))
+        return cursor.fetchall()
 
     def __del__(self):
         """Закрывает соединение при удалении объекта"""

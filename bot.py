@@ -1047,20 +1047,17 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         
         logger.info(f"📅 Время записи: {appointment_moscow.strftime('%d.%m.%Y %H:%M')} MSK")
         
-        # СОЗДАЕМ КУРСОР ВНЕ УСЛОВИЙ - ОБЯЗАТЕЛЬНО!
-        cursor = db.conn.cursor()
-        
         # 24-часовое напоминание
         reminder_24h_moscow = appointment_moscow - timedelta(hours=24)
         time_until_24h = (reminder_24h_moscow - current_moscow).total_seconds()
         
         if time_until_24h > 0:
             # Сохраняем в БД
-            cursor.execute('''
+            cursor = db.execute_with_retry('''
                 INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
-                VALUES (%s, %s, %s)
+                VALUES (?, ?, ?)
                 ON CONFLICT (appointment_id, reminder_type) DO UPDATE SET
-                scheduled_time = EXCLUDED.scheduled_time,
+                scheduled_time = excluded.scheduled_time,
                 sent = FALSE
             ''', (appointment_id, '24h', reminder_24h_moscow))
             
@@ -1084,11 +1081,11 @@ async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, app
         
         if time_until_1h > 0:
             # Сохраняем в БД
-            cursor.execute('''
+            cursor = db.execute_with_retry('''
                 INSERT INTO scheduled_reminders (appointment_id, reminder_type, scheduled_time)
-                VALUES (%s, %s, %s)
+                VALUES (?, ?, ?)
                 ON CONFLICT (appointment_id, reminder_type) DO UPDATE SET
-                scheduled_time = EXCLUDED.scheduled_time,
+                scheduled_time = excluded.scheduled_time,
                 sent = FALSE
             ''', (appointment_id, '1h', reminder_1h_moscow))
             
@@ -1130,10 +1127,9 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
         moscow_time = get_moscow_time()
         logger.info(f"⏰ [24h] Отправка напоминания для записи #{appointment_id} пользователю {user_id} в {moscow_time.strftime('%d.%m.%Y %H:%M')} MSK")
         
-        cursor = db.conn.cursor()
-        cursor.execute('''
+        cursor = db.execute_with_retry('''
             SELECT user_name, user_username, phone, service, appointment_date, appointment_time 
-            FROM appointments WHERE id = %s
+            FROM appointments WHERE id = ?
         ''', (appointment_id,))
         result = cursor.fetchone()
         
@@ -1146,10 +1142,10 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
         # Пропускаем напоминания для ручных записей администратора
         if user_name == "Администратор":
             logger.info(f"⏩ Пропуск 24h напоминания для записи администратора #{appointment_id}")
-            cursor.execute('''
+            cursor = db.execute_with_retry('''
                 UPDATE scheduled_reminders 
                 SET sent = TRUE 
-                WHERE appointment_id = %s AND reminder_type = '24h'
+                WHERE appointment_id = ? AND reminder_type = '24h'
             ''', (appointment_id,))
             db.conn.commit()
             return
@@ -1172,10 +1168,10 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
         
-        cursor.execute('''
+        cursor = db.execute_with_retry('''
             UPDATE scheduled_reminders 
             SET sent = TRUE 
-            WHERE appointment_id = %s AND reminder_type = '24h'
+            WHERE appointment_id = ? AND reminder_type = '24h'
         ''', (appointment_id,))
         db.conn.commit()
         
@@ -1184,11 +1180,10 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
     except BadRequest as e:
         if "chat not found" in str(e).lower():
             logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
-            cursor = db.conn.cursor()
-            cursor.execute('''
+            cursor = db.execute_with_retry('''
                 UPDATE scheduled_reminders 
                 SET sent = TRUE 
-                WHERE appointment_id = %s AND reminder_type = '24h'
+                WHERE appointment_id = ? AND reminder_type = '24h'
             ''', (appointment_id,))
             db.conn.commit()
         else:
@@ -1210,10 +1205,9 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         moscow_time = get_moscow_time()
         logger.info(f"⏰ [1h] Отправка напоминания для записи #{appointment_id} пользователю {user_id} в {moscow_time.strftime('%d.%m.%Y %H:%M')} MSK")
         
-        cursor = db.conn.cursor()
-        cursor.execute('''
+        cursor = db.execute_with_retry('''
             SELECT user_name, user_username, phone, service, appointment_date, appointment_time 
-            FROM appointments WHERE id = %s
+            FROM appointments WHERE id = ?
         ''', (appointment_id,))
         result = cursor.fetchone()
         
@@ -1226,10 +1220,10 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         # Пропускаем напоминания для ручных записей администратора
         if user_name == "Администратор":
             logger.info(f"⏩ Пропуск 1h напоминания для записи администратора #{appointment_id}")
-            cursor.execute('''
+            cursor = db.execute_with_retry('''
                 UPDATE scheduled_reminders 
                 SET sent = TRUE 
-                WHERE appointment_id = %s AND reminder_type = '1h'
+                WHERE appointment_id = ? AND reminder_type = '1h'
             ''', (appointment_id,))
             db.conn.commit()
             return
@@ -1252,10 +1246,10 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
         
-        cursor.execute('''
+        cursor = db.execute_with_retry('''
             UPDATE scheduled_reminders 
             SET sent = TRUE 
-            WHERE appointment_id = %s AND reminder_type = '1h'
+            WHERE appointment_id = ? AND reminder_type = '1h'
         ''', (appointment_id,))
         db.conn.commit()
         
@@ -1264,11 +1258,10 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
     except BadRequest as e:
         if "chat not found" in str(e).lower():
             logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
-            cursor = db.conn.cursor()
-            cursor.execute('''
+            cursor = db.execute_with_retry('''
                 UPDATE scheduled_reminders 
                 SET sent = TRUE 
-                WHERE appointment_id = %s AND reminder_type = '1h'
+                WHERE appointment_id = ? AND reminder_type = '1h'
             ''', (appointment_id,))
             db.conn.commit()
         else:
@@ -1311,8 +1304,7 @@ async def debug_jobs(context: ContextTypes.DEFAULT_TYPE):
 async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Восстанавливает запланированные напоминания из БД при запуске бота"""
     try:
-        cursor = db.conn.cursor()
-        cursor.execute('''
+        cursor = db.execute_with_retry('''
             SELECT sr.appointment_id, sr.reminder_type, sr.scheduled_time, a.user_id 
             FROM scheduled_reminders sr
             JOIN appointments a ON sr.appointment_id = a.id
@@ -1362,10 +1354,10 @@ async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
                 else:
                     logger.info(f"⏩ Пропущено восстановление {reminder_type} напоминания для #{appointment_id} (время прошло)")
                     # Помечаем как отправленное, чтобы больше не восстанавливать
-                    cursor.execute('''
+                    cursor = db.execute_with_retry('''
                         UPDATE scheduled_reminders 
                         SET sent = TRUE 
-                        WHERE appointment_id = %s AND reminder_type = %s
+                        WHERE appointment_id = ? AND reminder_type = ?
                     ''', (appointment_id, reminder_type))
                     db.conn.commit()
                 
@@ -3324,31 +3316,34 @@ async def send_new_appointment_notification(context: ContextTypes.DEFAULT_TYPE, 
 
 async def check_duplicate_appointments(context: ContextTypes.DEFAULT_TYPE):
     """Проверяет и уведомляет о дублирующихся записях"""
-    duplicates = db.check_duplicate_appointments()
-    
-    if duplicates:
-        for date, time, count in duplicates:
-            appointments = db.get_appointments_by_datetime(date, time)
-            
-            selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
-            weekday = selected_date_obj.weekday()
-            day_name = config.WEEKDAYS[weekday]
-            display_date = selected_date_obj.strftime("%d.%m.%Y")
-            
-            text = (
-                f"⚠️ *ВНИМАНИЕ: Обнаружены дублирующиеся записи!*\n\n"
-                f"📅 Дата: {day_name} {display_date}\n"
-                f"⏰ Время: {time}\n"
-                f"👥 Количество записей: {count}\n\n"
-                f"*Список клиентов:*\n"
-            )
-            
-            for appt_id, user_name, phone, service in appointments:
-                text += f"• {user_name} ({phone}) - {service} (#{appt_id})\n"
-            
-            text += f"\n*Рекомендуется связаться с клиентами и перенести записи*"
-            
-            await send_admin_notification(context, text)
+    try:
+        duplicates = db.check_duplicate_appointments()
+        
+        if duplicates:
+            for date, time, count in duplicates:
+                appointments = db.get_appointments_by_datetime(date, time)
+                
+                selected_date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+                weekday = selected_date_obj.weekday()
+                day_name = config.WEEKDAYS[weekday]
+                display_date = selected_date_obj.strftime("%d.%m.%Y")
+                
+                text = (
+                    f"⚠️ *ВНИМАНИЕ: Обнаружены дублирующиеся записи!*\n\n"
+                    f"📅 Дата: {day_name} {display_date}\n"
+                    f"⏰ Время: {time}\n"
+                    f"👥 Количество записей: {count}\n\n"
+                    f"*Список клиентов:*\n"
+                )
+                
+                for appt_id, user_name, phone, service in appointments:
+                    text += f"• {user_name} ({phone}) - {service} (#{appt_id})\n"
+                
+                text += f"\n*Рекомендуется связаться с клиентами и перенести записи*"
+                
+                await send_admin_notification(context, text)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке дублирующихся записей: {e}")
 
 async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, text):
     """Отправляет уведомление всем администраторам"""
@@ -3400,62 +3395,66 @@ def normalize_phone(phone):
 
 async def send_daily_schedule(context: ContextTypes.DEFAULT_TYPE):
     """Отправка ежедневного расписания администраторам"""
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Автоочистка перед расписанием: удалено {cleanup_result['total_deleted']} записей")
-    
-    appointments = db.get_today_appointments()
-    notification_chats = db.get_notification_chats()
-    
-    if not notification_chats:
-        logger.info("Нет настроенных чатов для ежедневного расписания")
-        return
-    
-    if not appointments:
-        text = f"📅 На сегодня в {config.BARBERSHOP_NAME} записей нет"
-    else:
-        text = f"📅 *Записи на сегодня в {config.BARBERSHOP_NAME}:*\n\n"
-        for user_name, phone, service, time in appointments:
-            manual_indicator = " 📝" if user_name == "Администратор" else ""
-            text += f"⏰ *{time}* - {user_name}{manual_indicator} ({phone}): {service}\n"
-    
-    for chat_id in notification_chats:
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode='Markdown'
-            )
-            logger.info(f"Ежедневное расписание отправлено в чат {chat_id}")
-        except BadRequest as e:
-            if "chat not found" in str(e).lower():
-                logger.warning(f"Chat not found for admin chat {chat_id}, skipping daily schedule")
-            else:
-                logger.error(f"BadRequest при отправке расписания в чат {chat_id}: {e}")
-        except Exception as e:
-            logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
+    try:
+        cleanup_result = db.cleanup_completed_appointments()
+        
+        if cleanup_result['total_deleted'] > 0:
+            logger.info(f"Автоочистка перед расписанием: удалено {cleanup_result['total_deleted']} записей")
+        
+        appointments = db.get_today_appointments()
+        notification_chats = db.get_notification_chats()
+        
+        if not notification_chats:
+            logger.info("Нет настроенных чатов для ежедневного расписания")
+            return
+        
+        if not appointments:
+            text = f"📅 На сегодня в {config.BARBERSHOP_NAME} записей нет"
+        else:
+            text = f"📅 *Записи на сегодня в {config.BARBERSHOP_NAME}:*\n\n"
+            for user_name, phone, service, time in appointments:
+                manual_indicator = " 📝" if user_name == "Администратор" else ""
+                text += f"⏰ *{time}* - {user_name}{manual_indicator} ({phone}): {service}\n"
+        
+        for chat_id in notification_chats:
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Ежедневное расписание отправлено в чат {chat_id}")
+            except BadRequest as e:
+                if "chat not found" in str(e).lower():
+                    logger.warning(f"Chat not found for admin chat {chat_id}, skipping daily schedule")
+                else:
+                    logger.error(f"BadRequest при отправке расписания в чат {chat_id}: {e}")
+            except Exception as e:
+                logger.error(f"Ошибка отправки расписания в чат {chat_id}: {e}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при подготовке ежедневного расписания: {e}")
 
 async def check_duplicates_daily(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная проверка дублирующихся записей"""
-    cleanup_result = db.cleanup_completed_appointments()
-    
-    if cleanup_result['total_deleted'] > 0:
-        logger.info(f"Автоочистка перед проверкой дубликатов: удалено {cleanup_result['total_deleted']} записей")
-    
-    await check_duplicate_appointments(context)
+    try:
+        cleanup_result = db.cleanup_completed_appointments()
+        
+        if cleanup_result['total_deleted'] > 0:
+            logger.info(f"Автоочистка перед проверкой дубликатов: удалено {cleanup_result['total_deleted']} записей")
+        
+        await check_duplicate_appointments(context)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке дубликатов: {e}")
 
 async def cleanup_completed_appointments_daily(context: ContextTypes.DEFAULT_TYPE):
     """Удаляет записи старше 7 дней в 00:00 MSK"""
     try:
         seven_days_ago = (get_moscow_time() - timedelta(days=7)).strftime("%Y-%m-%d")
         
-        cursor = db.conn.cursor()
-        
-        cursor.execute('DELETE FROM appointments WHERE appointment_date < %s', (seven_days_ago,))
+        cursor = db.execute_with_retry('DELETE FROM appointments WHERE appointment_date < ?', (seven_days_ago,))
         deleted_appointments = cursor.rowcount
         
-        cursor.execute('DELETE FROM schedule WHERE date < %s', (seven_days_ago,))
+        db.execute_with_retry('DELETE FROM schedule WHERE date < ?', (seven_days_ago,))
         
         db.conn.commit()
         
@@ -3464,37 +3463,32 @@ async def cleanup_completed_appointments_daily(context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"❌ Ошибка при ежедневной очистке: {e}")
 
-async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
-    """Очистка только неактивных пользователей"""
+aasync def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
+    """Очистка только неактивных пользователей старше 40 дней"""
     try:
-        cleanup_result = db.cleanup_old_data()
-        logger.info(f"✅ Очистка неактивных пользователей: {cleanup_result}")
+        # Используем прямой вызов метода БД
+        forty_days_ago = (get_moscow_time() - timedelta(days=40)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = db.execute_with_retry('''
+            DELETE FROM bot_users 
+            WHERE last_seen < ? 
+            AND user_id NOT IN (
+                SELECT DISTINCT user_id FROM appointments 
+                WHERE user_id IS NOT NULL
+            )
+        ''', (forty_days_ago,))
+
+        deleted_users = cursor.rowcount
+        db.conn.commit()
+
+        logger.info(f"✅ Очистка БД: удалено {deleted_users} неактивных пользователей (>40 дней)")
+        
     except Exception as e:
         logger.error(f"❌ Ошибка при очистке пользователей: {e}")
-
-async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Очищает старые отправленные напоминания"""
-    try:
-        cursor = db.conn.cursor()
-        cursor.execute('''
-            DELETE FROM scheduled_reminders 
-            WHERE sent = TRUE AND scheduled_time < CURRENT_TIMESTAMP - INTERVAL '7 days'
-        ''')
-        deleted_count = cursor.rowcount
-        db.conn.commit()
-        
-        if deleted_count > 0:
-            logger.info(f"✅ Очищено {deleted_count} старых напоминаний")
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка при очистке старых напоминаний: {e}")
 
 async def cleanup_duplicate_reminders(context: ContextTypes.DEFAULT_TYPE):
     """Очищает дублирующиеся напоминания"""
     try:
-        cursor = db.conn.cursor()
-        
-        cursor.execute('''
+        cursor = db.execute_with_retry('''
             DELETE FROM scheduled_reminders 
             WHERE id NOT IN (
                 SELECT MIN(id) 
@@ -3510,6 +3504,23 @@ async def cleanup_duplicate_reminders(context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"❌ Ошибка при очистке дублирующихся напоминаний: {e}")
+
+async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые отправленные напоминания"""
+    try:
+        seven_days_ago = (get_moscow_time() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = db.execute_with_retry('''
+            DELETE FROM scheduled_reminders 
+            WHERE sent = TRUE AND scheduled_time < ?
+        ''', (seven_days_ago,))
+        deleted_count = cursor.rowcount
+        db.conn.commit()
+        
+        if deleted_count > 0:
+            logger.info(f"✅ Очищено {deleted_count} старых напоминаний")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при очистке старых напоминаний: {e}")
 
 async def debug_timezones(context: ContextTypes.DEFAULT_TYPE):
     """Отладочная функция для проверки временных зон"""
