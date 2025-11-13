@@ -367,7 +367,7 @@ class Database:
             return {'total_deleted': 0}
 
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
-        """Добавляет новую запись"""
+    """Добавляет новую запись"""
         try:
             # Проверяем, не занято ли время
             cursor = self.execute_with_retry('''
@@ -377,26 +377,25 @@ class Database:
             
             if cursor.fetchone()[0] > 0:
                 raise Exception("Это время уже занято другим клиентом")
-            
+        
+            # 🎯 ИСПРАВЛЕННЫЙ ЗАПРОС - убрали ON CONFLICT для schedule
             # Добавляем запись
             cursor = self.execute_with_retry('''
                 INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (user_id, user_name, user_username, phone, service, date, time))
-            
+        
             appointment_id = cursor.lastrowid
-            
-            # Обновляем расписание
+        
+            # 🎯 ИСПРАВЛЕННЫЙ ЗАПРОС для расписания
             self.execute_with_retry('''
-                INSERT INTO schedule (date, time, available)
+                INSERT OR REPLACE INTO schedule (date, time, available)
                 VALUES (?, ?, ?)
-                ON CONFLICT(date, time) DO UPDATE SET 
-                available = excluded.available
             ''', (date, time, False))
-            
+        
             self.conn.commit()
             return appointment_id
-            
+        
         except Exception as e:
             logger.error(f"❌ Ошибка БД в add_appointment: {e}")
             raise
