@@ -3463,7 +3463,7 @@ async def cleanup_completed_appointments_daily(context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error(f"❌ Ошибка при ежедневной очистке: {e}")
 
-aasync def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
+async def cleanup_old_data(context: ContextTypes.DEFAULT_TYPE):
     """Очистка только неактивных пользователей старше 40 дней"""
     try:
         # Используем прямой вызов метода БД
