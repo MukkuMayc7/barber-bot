@@ -13,23 +13,24 @@ def get_moscow_time():
     return datetime.now(timezone(timedelta(hours=3)))
 
 def get_database_path():
-    """🎯 УЛУЧШЕННЫЙ ПУТЬ ДЛЯ RENDER"""
+    """🎯 АБСОЛЮТНО НАДЕЖНЫЙ ПУТЬ ДЛЯ RENDER"""
     import os
-    # Пробуем несколько возможных путей
-    possible_paths = [
-        '/tmp/barbershop.db',      # Основной путь Render
-        '/var/tmp/barbershop.db',  # Альтернативный путь
-        './barbershop.db'          # Локальный путь (на всякий случай)
-    ]
     
-    for path in possible_paths:
-        if os.path.exists(os.path.dirname(path)):
-            logger.info(f"📁 Используем путь к БД: {path}")
-            return path
+    # 🚨 ВАЖНО: На Render бесплатном тарифе /tmp/ может очищаться
+    # Используем текущую рабочую директорию
+    current_dir = os.getcwd()
+    db_path = os.path.join(current_dir, 'barbershop.db')
     
-    # Если ничего не найдено, используем /tmp/
-    logger.info("📁 Используем путь по умолчанию: /tmp/barbershop.db")
-    return '/tmp/barbershop.db'
+    logger.info(f"📁 ТЕКУЩАЯ ДИРЕКТОРИЯ: {current_dir}")
+    logger.info(f"📁 ПУТЬ К БД: {db_path}")
+    
+    # Проверяем доступность директории
+    if os.path.exists(current_dir):
+        logger.info(f"✅ Директория {current_dir} доступна для записи")
+    else:
+        logger.error(f"❌ Директория {current_dir} не существует!")
+    
+    return db_path
 
 class Database:
     def __init__(self):
