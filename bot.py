@@ -23,6 +23,270 @@ import config
 import httpx
 import asyncio
 
+# 🎯 BACKUP ФУНКЦИИ ДЛЯ RENDER (ЛОКАЛЬНЫЕ ФАЙЛЫ)
+
+async def backup_database(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ЛОКАЛЬНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ БЕЗ GITHUB"""
+    try:
+        logger.info("💾 Запуск локального backup базы данных...")
+        
+        # Создаем backup через database.py
+        backup_path = db.create_backup()
+        
+        if backup_path:
+            # Получаем информацию о backup файлах
+            backup_files = db.get_backup_files_info()
+            
+            text = (
+                f"💾 *Локальный backup создан успешно!*\n\n"
+                f"📁 Файл: `{os.path.basename(backup_path)}`\n"
+                f"📏 Размер: {os.path.getsize(backup_path) / 1024:.1f} KB\n"
+                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"📊 *Всего backup файлов:* {len(backup_files)}\n"
+                f"🔄 *Автовосстановление:* ✅ Включено\n\n"
+                f"*При перезапуске бота данные будут автоматически восстановлены из последнего backup*"
+            )
+        else:
+            text = (
+                f"⚠️ *Backup не создан*\n\n"
+                f"❌ Не удалось создать локальный backup\n"
+                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"*Проверьте логи для подробной информации*"
+            )
+        
+        # Отправляем уведомление администраторам
+        notification_chats = db.get_notification_chats()
+        for chat_id in notification_chats:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления о backup: {e}")
+        
+        logger.info("✅ Локальный backup процесс завершен")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании локального backup: {e}")
+
+async def check_memory_usage(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 МОНИТОРИНГ ИСПОЛЬЗОВАНИЯ ПАМЯТИ"""
+    try:
+        import psutil
+        import os
+        
+        process = psutil.Process(os.getpid())
+        memory_mb = process.memory_info().rss / 1024 / 1024
+        
+        logger.info(f"📊 Использование памяти: {memory_mb:.1f}MB")
+        
+        # Предупреждение если близко к лимиту 512MB
+        if memory_mb > 400:
+            logger.warning("⚠️ Близко к лимиту памяти! Выполняем экстренную очистку...")
+            
+            # Создаем backup перед очисткой
+            await backup_database(context)
+            
+            # Выполняем экстренную очистку
+            deleted_count = db.emergency_cleanup()
+            
+            # Уведомляем администраторов
+            text = (
+                f"🚨 *ЭКСТРЕННАЯ ОЧИСТКА ПАМЯТИ*\n\n"
+                f"📊 Использование памяти: {memory_mb:.1f}MB\n"
+                f"🧹 Удалено записей: {deleted_count}\n"
+                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"*Backup создан перед очисткой*"
+            )
+            
+            notification_chats = db.get_notification_chats()
+            for chat_id in notification_chats:
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+                except Exception as e:
+                    logger.error(f"Ошибка отправки уведомления: {e}")
+                    
+    except Exception as e:
+        logger.error(f"❌ Ошибка мониторинга памяти: {e}")
+
+async def show_backup_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПОКАЗЫВАЕТ СТАТУС BACKUP ДЛЯ АДМИНИСТРАТОРОВ"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой функции")
+        return
+    
+    backup_status = db.get_backup_status()
+    backup_files = db.get_backup_files_info()
+    
+    if not backup_status and not backup_files:
+        text = "📊 *Статус Backup*\n\n📭 Нет данных о backup"
+    else:
+        text = "📊 *Статус Backup*\n\n"
+        
+        if backup_files:
+            text += f"📁 *Backup файлов:* {len(backup_files)}\n\n"
+            for i, file_info in enumerate(backup_files[:3], 1):  # Показываем последние 3
+                text += f"{i}. 📄 `{os.path.basename(file_info['path'])}`\n"
+                text += f"   📏 {file_info['size_kb']} KB | 🕐 {file_info['date']}\n\n"
+        
+        if backup_status:
+            text += "*Последние операции backup:*\n\n"
+            for i, status in enumerate(backup_status[:3], 1):
+                timestamp, size_kb, success, backup_path, error_message = status
+                
+                if isinstance(timestamp, str):
+                    display_time = timestamp
+                else:
+                    display_time = timestamp.strftime("%d.%m.%Y %H:%M")
+                
+                status_icon = "✅" if success else "❌"
+                size_info = f" | 📏 {size_kb} KB" if size_kb else ""
+                
+                text += f"{i}. {status_icon} {display_time}{size_info}\n"
+                
+                if error_message and not success:
+                    text += f"   💬 {error_message[:50]}...\n"
+                
+                text += "\n"
+    
+    # Добавляем информацию о системе
+    db_path = get_database_path()
+    if os.path.exists(db_path):
+        db_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
+        size_info = f"{db_size:.2f} MB"
+    else:
+        size_info = "не найден"
+    
+    text += f"💾 *Текущая БД:* {size_info}\n"
+    text += f"🔄 *Автовосстановление:* ✅ Включено\n"
+    text += f"⏰ *Следующий backup:* через 6 часов\n"
+    text += f"📝 *Тип:* Локальные файлы (/tmp/)"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 Создать backup сейчас", callback_data="create_backup_now")],
+        [InlineKeyboardButton("📊 Статистика БД", callback_data="db_stats")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def create_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 СОЗДАЕТ BACKUP ПО ТРЕБОВАНИЮ"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    # Показываем сообщение о начале backup
+    await query.edit_message_text("💾 *Создание локального backup...*\n\nПожалуйста, подождите...", parse_mode='Markdown')
+    
+    # Создаем backup
+    backup_path = db.create_backup()
+    
+    if backup_path:
+        backup_files = db.get_backup_files_info()
+        
+        text = (
+            f"✅ *Локальный backup создан успешно!*\n\n"
+            f"📁 Файл: `{os.path.basename(backup_path)}`\n"
+            f"📏 Размер: {os.path.getsize(backup_path) / 1024:.1f} KB\n"
+            f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"📊 *Всего backup файлов:* {len(backup_files)}\n\n"
+            f"*Данные будут автоматически восстановлены при перезапуске*"
+        )
+    else:
+        text = (
+            f"❌ *Backup не создан*\n\n"
+            f"⚠️ Не удалось создать локальный backup\n\n"
+            f"*Возможные причины:*\n"
+            f"• Ошибка доступа к файлам\n"
+            f"• Недостаточно места в /tmp/\n"
+            f"• Проблемы с базой данных"
+        )
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 Статус backup", callback_data="backup_status")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПОКАЗЫВАЕТ СТАТИСТИКУ БАЗЫ ДАННЫХ"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    try:
+        # Получаем статистику
+        total_users = db.get_total_users_count()
+        active_users = db.get_active_users_count(30)
+        
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+        total_appointments = cursor.fetchone()[0]
+        
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments WHERE appointment_date >= DATE("now")')
+        future_appointments = cursor.fetchone()[0]
+        
+        # Получаем размер БД
+        db_path = get_database_path()
+        if os.path.exists(db_path):
+            size_mb = os.path.getsize(db_path) / (1024 * 1024)
+            size_info = f"{size_mb:.2f} MB"
+        else:
+            size_info = "не найден"
+        
+        # Получаем статус backup
+        backup_files = db.get_backup_files_info()
+        backup_status = db.get_backup_status()
+        last_backup = backup_status[0] if backup_status else None
+        last_backup_time = last_backup[0].strftime("%d.%m.%Y %H:%M") if last_backup and last_backup[0] else "нет данных"
+        last_backup_status = "✅ Успешно" if last_backup and last_backup[2] else "❌ Ошибка"
+        
+        text = (
+            f"📊 *Статистика Базы Данных*\n\n"
+            f"👥 *Пользователи:*\n"
+            f"• Всего: {total_users}\n"
+            f"• Активных (30 дней): {active_users}\n\n"
+            f"📅 *Записи:*\n"
+            f"• Всего: {total_appointments}\n"
+            f"• Будущих: {future_appointments}\n\n"
+            f"💾 *Backup система:*\n"
+            f"• Файлов backup: {len(backup_files)}\n"
+            f"• Последний backup: {last_backup_time}\n"
+            f"• Статус: {last_backup_status}\n"
+            f"• Размер БД: {size_info}\n\n"
+            f"🛠 *Render Free Tier:*\n"
+            f"• Память: 512 MB\n"
+            f"• Хранилище: Эфемерное (/tmp/)\n"
+            f"• Сон: 15 мин неактивности\n"
+            f"• Backup: Локальные файлы"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Создать backup", callback_data="create_backup_now")],
+            [InlineKeyboardButton("📊 Статус backup", callback_data="backup_status")],
+            [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении статистики БД: {e}")
+        await query.edit_message_text("❌ Ошибка при получении статистики БД")
+
 # Настройка логирования
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
@@ -2323,6 +2587,8 @@ async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📋 Список администраторов", callback_data="admin_list")],
         [InlineKeyboardButton("➕ Добавить администратора", callback_data="admin_add")],
         [InlineKeyboardButton("➖ Удалить администратора", callback_data="admin_remove")],
+        # 🎯 ДОБАВЛЯЕМ КНОПКУ BACKUP
+        [InlineKeyboardButton("💾 Управление backup", callback_data="backup_status")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ]
     
@@ -3046,6 +3312,122 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"🔄 button_handler: {query.data} от пользователя {query.from_user.id}")
     
+    # 🎯 ДОБАВЛЯЕМ НОВЫЕ ОБРАБОТЧИКИ BACKUP
+    if query.data == "backup_status":
+        await show_backup_status(update, context)
+    elif query.data == "create_backup_now":
+        await create_backup_now(update, context)
+    elif query.data == "db_stats":
+        await show_db_stats(update, context)
+    
+    # Остальные обработчики остаются без изменений
+    elif query.data == "main_menu":
+        await show_main_menu(update, context)
+    elif query.data == "make_appointment":
+        user_id = query.from_user.id
+        is_admin = db.is_admin(user_id)
+        await make_appointment_start(update, context, is_admin=is_admin)
+    
+    elif query.data == "manage_admins":
+        await manage_admins(update, context)
+    elif query.data == "admin_list":
+        await show_admin_list(update, context)
+    elif query.data == "admin_add":
+        await add_admin_start(update, context)
+    elif query.data == "admin_remove":
+        await remove_admin_start(update, context)
+    
+    elif query.data.startswith("admin_remove_confirm_"):
+        try:
+            admin_id = int(query.data.split("_")[3])
+            logger.info(f"🔄 admin_remove_confirm для admin_id: {admin_id}")
+            await remove_admin_confirm(update, context, admin_id)
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
+            await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
+    
+    elif query.data.startswith("admin_remove_final_"):
+        try:
+            admin_id = int(query.data.split("_")[3])
+            logger.info(f"🔄 admin_remove_final для admin_id: {admin_id}")
+            await remove_admin_final(update, context, admin_id)
+        except (ValueError, IndexError) as e:
+            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
+            await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
+    
+    elif query.data.startswith("service_"):
+        await service_selected(update, context)
+    elif query.data.startswith("date_"):
+        await date_selected(update, context)
+    elif query.data.startswith("time_"):
+        await time_selected(update, context)
+    elif query.data.startswith("cancel_"):
+        if query.data.startswith("cancel_admin_"):
+            try:
+                appointment_id = int(query.data.split("_")[2])
+                await cancel_appointment(update, context, appointment_id)
+            except (ValueError, IndexError):
+                await query.edit_message_text("❌ Ошибка: неверный ID записи")
+        else:
+            try:
+                appointment_id = int(query.data.split("_")[1])
+                await cancel_appointment(update, context, appointment_id)
+            except (ValueError, IndexError):
+                await query.edit_message_text("❌ Ошибка: неверный ID записи")
+    elif query.data.startswith("schedule_day_"):
+        await schedule_day_selected(update, context)
+
+    elif query.data == "weekly_report":
+        await weekly_report(update, context)
+    elif query.data == "show_statistics":
+        await show_statistics(update, context)
+    elif query.data.startswith("schedule_working_"):
+        await schedule_working_selected(update, context)
+    elif query.data.startswith("schedule_off_"):
+        await schedule_off_selected(update, context)
+    elif query.data.startswith("schedule_start_"):
+        await schedule_start_selected(update, context)
+    elif query.data.startswith("schedule_end_"):
+        await schedule_end_selected(update, context)
+    elif query.data == "manage_schedule":
+        await manage_schedule(update, context)
+    
+    elif query.data == "schedule_cancel_appointments":
+        await handle_schedule_cancel_appointments(update, context)
+    elif query.data == "schedule_cancel_changes":
+        await handle_schedule_cancel_changes(update, context)
+    
+    elif query.data.startswith("call_"):
+        await handle_schedule_actions(update, context)
+    elif query.data.startswith("edit_"):
+        await handle_schedule_actions(update, context)
+    elif query.data.startswith("cancel_slot_"):
+        await handle_schedule_actions(update, context)
+    elif query.data == "refresh_today":
+        await handle_schedule_actions(update, context)
+    elif query.data == "all_contacts":
+        await handle_schedule_actions(update, context)
+    elif query.data == "show_today_visual":
+        await handle_schedule_actions(update, context)
+    
+    elif query.data == "week_appointments":
+        await show_week_appointments(update, context)
+    elif query.data.startswith("week_day_"):
+        date_str = query.data[9:]
+        await show_day_appointments_visual(update, context, date_str)
+    elif query.data.startswith("refresh_day_"):
+        date_str = query.data[12:]
+        await show_day_appointments_visual(update, context, date_str)
+    elif query.data.startswith("day_contacts_"):
+        date_str = query.data[13:]
+        await show_day_contacts(update, context, date_str)
+    elif query.data.startswith("called_"):
+        await called_confirmation(update, context)
+    elif query.data == "confirm_cancel_slot":
+        await confirm_cancel_slot(update, context)
+    else:
+        logger.warning(f"⚠️ Неизвестный callback_data: {query.data}")
+    
     if query.data == "main_menu":
         await show_main_menu(update, context)
     elif query.data == "make_appointment":
@@ -3728,7 +4110,7 @@ def setup_job_queue(application: Application):
     # 🎯 ПРОВЕРКА БД ПРИ ЗАПУСКЕ
     job_queue.run_once(
         callback=lambda context: asyncio.create_task(check_database_status(context)),
-        when=10,  # Через 10 секунд после запуска
+        when=10,
         name="check_db_status"
     )
 
@@ -3748,6 +4130,22 @@ def setup_job_queue(application: Application):
         name="prevent_sleep"
     )
 
+    # 🎯 ЛОКАЛЬНЫЙ BACKUP КАЖДЫЕ 6 ЧАСОВ
+    job_queue.run_repeating(
+        backup_database,
+        interval=21600,  # 6 часов
+        first=300,       # Первый через 5 минут после запуска
+        name="backup_database"
+    )
+
+    # 🎯 МОНИТОРИНГ ПАМЯТИ КАЖДЫЕ 30 МИНУТ
+    job_queue.run_repeating(
+        check_memory_usage,
+        interval=1800,  # 30 минут
+        first=60,       # Первый через 1 минуту
+        name="check_memory"
+    )
+
     job_queue.run_once(
         callback=lambda context: asyncio.create_task(restore_scheduled_reminders(context)), 
         when=5, 
@@ -3755,21 +4153,7 @@ def setup_job_queue(application: Application):
     )
     
     job_queue.run_repeating(optimize_database, interval=3600, first=60, name="optimize_db")
-    job_queue.run_daily(backup_database, time=datetime.strptime("03:00", "%H:%M").time(), name="backup_db")
-    job_queue.run_daily(check_database_size, time=datetime.strptime("12:00", "%H:%M").time(), name="check_db_size")
-
-    # ★★★ ВАЖНО: Поддержание активности БД на Render ★★★
-    job_queue.run_repeating(keep_database_alive, interval=300, first=30, name="keep_db_alive")     # Каждые 5 минут
-
-    # Оптимизация БД каждый час
-    job_queue.run_repeating(optimize_database, interval=3600, first=3600, name="optimize_db")
     
-    # Резервное копирование каждый день в 3:00 UTC (6:00 MSK)
-    job_queue.run_daily(backup_database, time=datetime.strptime("03:00", "%H:%M").time(), name="backup_db")
-    
-    # Проверка размера БД каждый день
-    job_queue.run_daily(check_database_size, time=datetime.strptime("12:00", "%H:%M").time(), name="check_db_size")
-
     # ИСПРАВЛЕННЫЕ ВРЕМЕНА (в UTC):
     
     # 06:00 UTC = 09:00 MSK - Ежедневное расписание администраторам
@@ -3778,10 +4162,10 @@ def setup_job_queue(application: Application):
     # 02:00 UTC = 05:00 MSK - Проверка дубликатов  
     job_queue.run_daily(check_duplicates_daily, time=datetime.strptime("02:00", "%H:%M").time(), name="check_duplicates")
     
-    # 21:00 UTC = 00:00 MSK - Очистка неактивных пользователей (40+ дней)
+    # 21:00 UTC = 00:00 MSK - Очистка неактивных пользователей
     job_queue.run_daily(cleanup_old_data, time=datetime.strptime("21:00", "%H:%M").time(), name="cleanup_old_data")
     
-    # 21:00 UTC = 00:00 MSK - Очистка старых записей (7+ дней) - ДЛЯ СТАТИСТИКИ
+    # 21:00 UTC = 00:00 MSK - Очистка старых записей
     job_queue.run_daily(cleanup_completed_appointments_daily, time=datetime.strptime("21:00", "%H:%M").time(), name="cleanup_old_appointments")
     
     # 22:00 UTC = 01:00 MSK - Очистка старых напоминаний

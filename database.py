@@ -3,6 +3,8 @@ import os
 import logging
 import sqlite3
 import time
+import shutil
+import glob
 from datetime import datetime, timedelta, timezone
 import config
 
@@ -14,12 +16,9 @@ def get_moscow_time():
 
 def get_database_path():
     """🎯 ОПТИМИЗИРОВАННЫЙ ПУТЬ ДЛЯ RENDER"""
-    import os
-    
     db_path = '/tmp/barbershop.db'
     db_exists = os.path.exists(db_path)
     
-    # Простая диагностика без лишних подключений
     logger.info(f"📁 ПУТЬ К БД: {db_path}")
     logger.info(f"📊 БД СУЩЕСТВУЕТ: {db_exists}")
     
@@ -37,7 +36,9 @@ class Database:
         self.max_retries = 3
         self.retry_delay = 0.1
         self.conn = None
-        self.db_path = get_database_path()  # 🎯 Сохраняем единый путь
+        self.db_path = get_database_path()
+        self.last_backup_time = None
+        self.backup_enabled = True
         self.reconnect()
     
     def reconnect(self):
@@ -50,7 +51,6 @@ class Database:
                     except:
                         pass
                 
-                # 🎯 ИСПОЛЬЗУЕМ ЕДИНЫЙ ПУТЬ
                 logger.info(f"📁 Подключаемся к БД по пути: {self.db_path}")
                 
                 self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
@@ -61,12 +61,18 @@ class Database:
                 self.conn.execute('PRAGMA synchronous=NORMAL')
                 self.conn.execute('PRAGMA cache_size=-64000')
                 self.conn.execute('PRAGMA foreign_keys=ON')
+                self.conn.execute('PRAGMA auto_vacuum=INCREMENTAL')
                 
                 self.create_tables()
                 self.update_database_structure()
                 self.create_admin_tables()
                 self.setup_default_notifications()
                 self.setup_default_schedule()
+                
+                # 🎯 ВОССТАНОВЛЕНИЕ ИЗ BACKUP ПРИ ПЕРВОМ ЗАПУСКЕ
+                if not self.has_data() and self.backup_enabled:
+                    self.restore_from_backup()
+                
                 logger.info("✅ Успешное подключение к SQLite")
                 return
                 
@@ -82,6 +88,19 @@ class Database:
                     time.sleep(self.retry_delay)
                     continue
                 raise
+
+    def has_data(self):
+        """Проверяет, есть ли данные в БД"""
+        try:
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            appointments_count = cursor.fetchone()[0]
+            
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            users_count = cursor.fetchone()[0]
+            
+            return appointments_count > 0 or users_count > 0
+        except:
+            return False
 
     def check_connection(self):
         """🎯 ПРОСТАЯ ПРОВЕРКА СОЕДИНЕНИЯ БЕЗ РЕКУРСИИ"""
@@ -107,7 +126,6 @@ class Database:
         """Выполняет запрос с повторными попытками при блокировке"""
         for attempt in range(self.max_retries):
             try:
-                # 🎯 ПРОСТАЯ ПРОВЕРКА СОЕДИНЕНИЯ БЕЗ РЕКУРСИИ
                 if not self.conn:
                     self.reconnect()
                     
@@ -215,6 +233,19 @@ class Database:
             )
         ''')
         
+        # 🎯 ТАБЛИЦА ДЛЯ BACKUP МЕТАДАННЫХ
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS backup_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                backup_type TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                size_kb INTEGER,
+                success BOOLEAN,
+                backup_path TEXT,
+                error_message TEXT
+            )
+        ''')
+        
         self.conn.commit()
         logger.info("✅ Таблицы успешно созданы/проверены")
 
@@ -223,7 +254,6 @@ class Database:
         cursor = self.conn.cursor()
         
         try:
-            # Проверяем существование колонок и добавляем если нужно
             cursor.execute("PRAGMA table_info(appointments)")
             columns = [column[1] for column in cursor.fetchall()]
             
@@ -241,6 +271,146 @@ class Database:
             logger.error(f"❌ Ошибка при обновлении структуры БД: {e}")
             self.conn.rollback()
 
+    def create_backup(self):
+        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP БЕЗ GITHUB"""
+        try:
+            if not self.backup_enabled:
+                logger.info("⏩ Backup отключен")
+                return None
+            
+            logger.info("💾 Создание локального backup...")
+            
+            # Создаем имя файла с timestamp
+            timestamp = int(time.time())
+            backup_path = f"/tmp/barbershop_backup_{timestamp}.db"
+            
+            # Копируем файл БД
+            shutil.copy2(self.db_path, backup_path)
+            
+            # Сохраняем информацию о backup
+            cursor = self.execute_with_retry('''
+                INSERT INTO backup_metadata 
+                (backup_type, size_kb, success, backup_path) 
+                VALUES (?, ?, ?, ?)
+            ''', ('local_file', os.path.getsize(self.db_path) // 1024, True, backup_path))
+            
+            self.conn.commit()
+            
+            # 🧹 Очищаем старые backup файлы (оставляем последние 5)
+            self.cleanup_old_backups()
+            
+            self.last_backup_time = get_moscow_time()
+            logger.info(f"✅ Локальный backup создан: {backup_path}")
+            return backup_path
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания локального backup: {e}")
+            
+            try:
+                cursor = self.execute_with_retry('''
+                    INSERT INTO backup_metadata 
+                    (backup_type, success, error_message) 
+                    VALUES (?, ?, ?)
+                ''', ('local_file', False, str(e)))
+                self.conn.commit()
+            except:
+                pass
+            
+            return None
+
+    def cleanup_old_backups(self):
+        """Очищает старые backup файлы"""
+        try:
+            backup_files = glob.glob("/tmp/barbershop_backup_*.db")
+            # Сортируем по времени создания (новые в конце)
+            backup_files.sort(key=os.path.getmtime)
+            
+            # Оставляем только последние 5 файлов
+            if len(backup_files) > 5:
+                for old_backup in backup_files[:-5]:
+                    try:
+                        os.remove(old_backup)
+                        logger.info(f"🧹 Удален старый backup: {old_backup}")
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка удаления backup {old_backup}: {e}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка очистки backup: {e}")
+
+    def restore_from_backup(self):
+        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP"""
+        try:
+            if not self.backup_enabled:
+                logger.info("⏩ Восстановление отключено")
+                return False
+            
+            # Ищем backup файлы
+            backup_files = glob.glob("/tmp/barbershop_backup_*.db")
+            if not backup_files:
+                logger.info("⏩ Нет backup файлов для восстановления")
+                return False
+            
+            # Берем самый новый backup
+            latest_backup = max(backup_files, key=os.path.getmtime)
+            
+            logger.info(f"🔄 Восстанавливаем из backup: {latest_backup}")
+            
+            # Закрываем текущее соединение
+            if self.conn:
+                self.conn.close()
+            
+            # Копируем backup поверх текущей БД
+            shutil.copy2(latest_backup, self.db_path)
+            
+            # Переподключаемся
+            self.reconnect()
+            
+            logger.info("✅ База данных успешно восстановлена из локального backup!")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при восстановлении из backup: {e}")
+            return False
+
+    def get_backup_status(self):
+        """Получает статус последних backup"""
+        try:
+            cursor = self.execute_with_retry('''
+                SELECT timestamp, size_kb, success, backup_path, error_message
+                FROM backup_metadata 
+                ORDER BY timestamp DESC 
+                LIMIT 5
+            ''')
+            
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения статуса backup: {e}")
+            return []
+
+    def get_backup_files_info(self):
+        """Получает информацию о backup файлах"""
+        try:
+            backup_files = glob.glob("/tmp/barbershop_backup_*.db")
+            files_info = []
+            
+            for file_path in backup_files:
+                file_size = os.path.getsize(file_path) / 1024  # KB
+                file_time = os.path.getmtime(file_path)
+                file_date = datetime.fromtimestamp(file_time).strftime("%d.%m.%Y %H:%M")
+                
+                files_info.append({
+                    'path': file_path,
+                    'size_kb': round(file_size, 1),
+                    'date': file_date
+                })
+            
+            # Сортируем по дате (новые первые)
+            files_info.sort(key=lambda x: x['date'], reverse=True)
+            return files_info
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения информации о backup файлах: {e}")
+            return []
+
     def create_admin_tables(self):
         """Создает таблицу для администраторов"""
         cursor = self.conn.cursor()
@@ -256,7 +426,6 @@ class Database:
             )
         ''')
         
-        # Добавляем начальных администраторов из config
         for admin_id in config.ADMIN_IDS:
             cursor.execute('''
                 INSERT OR IGNORE INTO bot_admins (admin_id, username, first_name, last_name, added_by)
@@ -313,17 +482,17 @@ class Database:
     def automatic_cleanup(self):
         """🎯 АВТОМАТИЧЕСКАЯ ОЧИСТКА ДЛЯ RENDER"""
         try:
-            # Очищаем прошедшие записи (старая функция)
+            # Очищаем прошедшие записи
             cleanup_result = self.cleanup_completed_appointments()
             
-            # Дополнительно: очищаем очень старые записи (> 30 дней) для экономии места
+            # Дополнительно: очищаем очень старые записи (> 14 дней) для экономии места
             moscow_time = get_moscow_time()
-            cutoff_date_30_days = (moscow_time - timedelta(days=30)).strftime("%Y-%m-%d")
+            cutoff_date_14_days = (moscow_time - timedelta(days=14)).strftime("%Y-%m-%d")
             
             cursor = self.execute_with_retry('''
                 DELETE FROM appointments 
                 WHERE appointment_date < ?
-            ''', (cutoff_date_30_days,))
+            ''', (cutoff_date_14_days,))
             deleted_old = cursor.rowcount
             
             # Очищаем старые напоминания
@@ -334,8 +503,8 @@ class Database:
             ''', (cutoff_datetime,))
             deleted_reminders = cursor.rowcount
             
-            # Очищаем неактивных пользователей (не заходили 90 дней)
-            cutoff_users = (moscow_time - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+            # Очищаем неактивных пользователей (не заходили 60 дней)
+            cutoff_users = (moscow_time - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
             cursor = self.execute_with_retry('''
                 DELETE FROM bot_users 
                 WHERE last_seen < ?
@@ -365,6 +534,43 @@ class Database:
             logger.error(f"❌ Ошибка автоматической очистки: {e}")
             return {'total_deleted': 0}
 
+    def emergency_cleanup(self):
+        """Экстренная очистка при нехватке памяти"""
+        try:
+            logger.warning("🚨 ВЫПОЛНЯЕТСЯ ЭКСТРЕННАЯ ОЧИСТКА!")
+            
+            # Создаем backup перед очисткой
+            self.create_backup()
+            
+            # Удаляем очень старые записи (> 7 дней)
+            moscow_time = get_moscow_time()
+            cutoff_date = (moscow_time - timedelta(days=7)).strftime("%Y-%m-%d")
+            
+            cursor = self.execute_with_retry('''
+                DELETE FROM appointments 
+                WHERE appointment_date < ?
+            ''', (cutoff_date,))
+            deleted_appointments = cursor.rowcount
+            
+            # Очищаем старые backup метаданные
+            cursor = self.execute_with_retry('''
+                DELETE FROM backup_metadata 
+                WHERE timestamp < DATE('now', '-30 days')
+            ''')
+            deleted_backup_meta = cursor.rowcount
+            
+            self.conn.commit()
+            
+            logger.info(f"🚨 Экстренная очистка: удалено {deleted_appointments} записей, {deleted_backup_meta} backup метаданных")
+            
+            return deleted_appointments + deleted_backup_meta
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка экстренной очистки: {e}")
+            return 0
+
+    # 🎯 ОСТАВШИЕСЯ МЕТОДЫ БЕЗ ИЗМЕНЕНИЙ
+    
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
         """Добавляет новую запись"""
         try:
@@ -377,8 +583,6 @@ class Database:
             if cursor.fetchone()[0] > 0:
                 raise Exception("Это время уже занято другим клиентом")
             
-            # 🎯 ИСПРАВЛЕННЫЙ ЗАПРОС - убрали ON CONFLICT для schedule
-            # Добавляем запись
             cursor = self.execute_with_retry('''
                 INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -386,7 +590,6 @@ class Database:
             
             appointment_id = cursor.lastrowid
             
-            # 🎯 ИСПРАВЛЕННЫЙ ЗАПРОС для расписания
             self.execute_with_retry('''
                 INSERT OR REPLACE INTO schedule (date, time, available)
                 VALUES (?, ?, ?)
@@ -434,7 +637,6 @@ class Database:
         ''', (date,))
         booked_times = [row[0] for row in cursor.fetchall()]
         
-        # Получаем график работы
         date_obj = datetime.strptime(date, "%Y-%m-%d").date()
         weekday = date_obj.weekday()
         cursor = self.execute_with_retry('''
@@ -554,7 +756,6 @@ class Database:
 
     def cancel_appointment(self, appointment_id, user_id=None):
         """Отменяет запись"""
-        # Получаем информацию о записи
         cursor = self.execute_with_retry('''
             SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
             FROM appointments WHERE id = ?
@@ -564,7 +765,6 @@ class Database:
         if not appointment:
             return None
         
-        # Удаляем запись
         if user_id:
             cursor = self.execute_with_retry('''
                 DELETE FROM appointments 
@@ -577,7 +777,6 @@ class Database:
         
         if cursor.rowcount > 0:
             user_id, user_name, phone, service, date, time = appointment
-            # Освобождаем время в расписании
             self.execute_with_retry('''
                 DELETE FROM schedule WHERE date = ? AND time = ?
             ''', (date, time))
@@ -639,7 +838,6 @@ class Database:
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
         
-        # Удаляем записи за прошлые даты
         cursor = self.execute_with_retry('''
             DELETE FROM appointments 
             WHERE appointment_date < ?
@@ -647,7 +845,6 @@ class Database:
         
         deleted_past_dates = cursor.rowcount
         
-        # Удаляем прошедшие записи за сегодня
         cursor = self.execute_with_retry('''
             DELETE FROM appointments 
             WHERE appointment_date = ? 
@@ -656,7 +853,6 @@ class Database:
         
         deleted_today = cursor.rowcount
         
-        # Очищаем расписание
         self.execute_with_retry('''
             DELETE FROM schedule 
             WHERE date < ?
@@ -767,7 +963,7 @@ class Database:
                 if appointment:
                     self.execute_with_retry('DELETE FROM appointments WHERE id = ?', (appt_id,))
                     self.execute_with_retry('DELETE FROM schedule WHERE date = ? AND time = ?', 
-                              (appt[4], appt[5]))
+                              (appointment[4], appointment[5]))
                     canceled_appointments.append(appointment)
             
             self.conn.commit()
@@ -868,7 +1064,7 @@ class Database:
                 'total_appointments': total_appointments,
                 'peak_time': peak_time,
                 'peak_time_count': peak_time_count,
-                'new_clients': 0,  # Упростим для начала
+                'new_clients': 0,
                 'regular_clients': 0
             }
             
