@@ -30,91 +30,25 @@ def get_database_path():
     return '/tmp/barbershop.db'
 
 async def backup_database(context: ContextTypes.DEFAULT_TYPE):
-    """🎯 ЛОКАЛЬНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ БЕЗ GITHUB"""
+    """🎯 ЛОКАЛЬНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ БЕЗ УВЕДОМЛЕНИЙ"""
     try:
-        logger.info("💾 Запуск локального backup базы данных...")
+        logger.info("💾 Запуск автоматического локального backup...")
         
-        # Создаем backup через database.py
+        # Создаем backup через database.py (без уведомлений)
         backup_path = db.create_backup()
         
         if backup_path:
-            # Получаем информацию о backup файлах
-            backup_files = db.get_backup_files_info()
-            
-            text = (
-                f"💾 *Локальный backup создан успешно!*\n\n"
-                f"📁 Файл: `{os.path.basename(backup_path)}`\n"
-                f"📏 Размер: {os.path.getsize(backup_path) / 1024:.1f} KB\n"
-                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"📊 *Всего backup файлов:* {len(backup_files)}\n"
-                f"🔄 *Автовосстановление:* ✅ Включено\n\n"
-                f"*При перезапуске бота данные будут автоматически восстановлены из последнего backup*"
-            )
+            logger.info(f"✅ Автоматический backup создан: {backup_path}")
         else:
-            text = (
-                f"⚠️ *Backup не создан*\n\n"
-                f"❌ Не удалось создать локальный backup\n"
-                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"*Проверьте логи для подробной информации*"
-            )
+            logger.warning("⚠️ Автоматический backup не создан")
         
-        # Отправляем уведомление администраторам
-        notification_chats = db.get_notification_chats()
-        for chat_id in notification_chats:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
-            except Exception as e:
-                logger.error(f"Ошибка отправки уведомления о backup: {e}")
-        
-        logger.info("✅ Локальный backup процесс завершен")
+        # 🎯 УБИРАЕМ УВЕДОМЛЕНИЯ АДМИНИСТРАТОРАМ
         
     except Exception as e:
-        logger.error(f"❌ Ошибка при создании локального backup: {e}")
-
-async def backup_database(context: ContextTypes.DEFAULT_TYPE):
-    """🎯 ЛОКАЛЬНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ БЕЗ GITHUB"""
-    try:
-        logger.info("💾 Запуск локального backup базы данных...")
-        
-        # Создаем backup через database.py
-        backup_path = db.create_backup()
-        
-        if backup_path:
-            # Получаем информацию о backup файлах
-            backup_files = db.get_backup_files_info()
-            
-            text = (
-                f"💾 *Локальный backup создан успешно!*\n\n"
-                f"📁 Файл: `{os.path.basename(backup_path)}`\n"
-                f"📏 Размер: {os.path.getsize(backup_path) / 1024:.1f} KB\n"
-                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"📊 *Всего backup файлов:* {len(backup_files)}\n"
-                f"🔄 *Автовосстановление:* ✅ Включено\n\n"
-                f"*При перезапуске бота данные будут автоматически восстановлены из последнего backup*"
-            )
-        else:
-            text = (
-                f"⚠️ *Backup не создан*\n\n"
-                f"❌ Не удалось создать локальный backup\n"
-                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"*Проверьте логи для подробной информации*"
-            )
-        
-        # Отправляем уведомление администраторам
-        notification_chats = db.get_notification_chats()
-        for chat_id in notification_chats:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
-            except Exception as e:
-                logger.error(f"Ошибка отправки уведомления о backup: {e}")
-        
-        logger.info("✅ Локальный backup процесс завершен")
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка при создании локального backup: {e}")
+        logger.error(f"❌ Ошибка при создании автоматического backup: {e}")
 
 async def check_memory_usage(context: ContextTypes.DEFAULT_TYPE):
-    """🎯 МОНИТОРИНГ ИСПОЛЬЗОВАНИЯ ПАМЯТИ"""
+    """🎯 МОНИТОРИНГ ИСПОЛЬЗОВАНИЯ ПАМЯТИ БЕЗ УВЕДОМЛЕНИЙ"""
     try:
         import psutil
         import os
@@ -128,27 +62,17 @@ async def check_memory_usage(context: ContextTypes.DEFAULT_TYPE):
         if memory_mb > 400:
             logger.warning("⚠️ Близко к лимиту памяти! Выполняем экстренную очистку...")
             
-            # Создаем backup перед очисткой
-            await backup_database(context)
+            # Создаем backup перед очисткой (без уведомлений)
+            backup_path = db.create_backup()
+            if backup_path:
+                logger.info(f"✅ Backup перед очисткой создан: {backup_path}")
             
             # Выполняем экстренную очистку
             deleted_count = db.emergency_cleanup()
             
-            # Уведомляем администраторов
-            text = (
-                f"🚨 *ЭКСТРЕННАЯ ОЧИСТКА ПАМЯТИ*\n\n"
-                f"📊 Использование памяти: {memory_mb:.1f}MB\n"
-                f"🧹 Удалено записей: {deleted_count}\n"
-                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"*Backup создан перед очисткой*"
-            )
+            logger.info(f"🚨 Экстренная очистка: удалено {deleted_count} записей")
             
-            notification_chats = db.get_notification_chats()
-            for chat_id in notification_chats:
-                try:
-                    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
-                except Exception as e:
-                    logger.error(f"Ошибка отправки уведомления: {e}")
+            # 🎯 УБИРАЕМ УВЕДОМЛЕНИЯ АДМИНИСТРАТОРАМ
                     
     except Exception as e:
         logger.error(f"❌ Ошибка мониторинга памяти: {e}")
@@ -332,6 +256,17 @@ async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка при получении статистики БД: {e}")
         await query.edit_message_text("❌ Ошибка при получении статистики БД")
+
+async def backup_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 КОМАНДА ДЛЯ РУЧНОЙ ПРОВЕРКИ BACKUP"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой команде")
+        return
+    
+    # Показываем статус backup
+    await show_backup_status(update, context)
 
 # Настройка логирования
 logging.getLogger('httpx').setLevel(logging.WARNING)
@@ -1342,6 +1277,43 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"✅ phone_input завершен, awaiting_phone установлен в False")
     
     return ConversationHandler.END
+
+def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
+    """Добавляет новую запись С АВТОМАТИЧЕСКИМ BACKUP"""
+    try:
+        # Проверяем, не занято ли время
+        cursor = self.execute_with_retry('''
+            SELECT COUNT(*) FROM appointments 
+            WHERE appointment_date = ? AND appointment_time = ?
+        ''', (date, time))
+        
+        if cursor.fetchone()[0] > 0:
+            raise Exception("Это время уже занято другим клиентом")
+        
+        cursor = self.execute_with_retry('''
+            INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, user_name, user_username, phone, service, date, time))
+        
+        appointment_id = cursor.lastrowid
+        
+        self.execute_with_retry('''
+            INSERT OR REPLACE INTO schedule (date, time, available)
+            VALUES (?, ?, ?)
+        ''', (date, time, False))
+        
+        self.conn.commit()
+        
+        # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПОСЛЕ КАЖДОЙ НОВОЙ ЗАПИСИ
+        if self.backup_enabled:
+            logger.info(f"💾 Автоматический backup после создания записи #{appointment_id}")
+            self.create_backup()
+        
+        return appointment_id
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка БД в add_appointment: {e}")
+        raise
 
 async def schedule_appointment_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int, date: str, time: str, user_id: int):
     """Планирует напоминания для новой записи сразу при создании"""
@@ -4440,6 +4412,10 @@ def main():
             
             application.add_handler(CommandHandler("stop", stop_command))
             logger.info("✅ CommandHandler 'stop' added")
+
+            application.add_handler(CommandHandler("backup", backup_info))
+            application.add_handler(CommandHandler("backup_info", backup_info))
+            logger.info("✅ CommandHandler 'backup' and 'backup_info' added")
             
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             logger.info("✅ MessageHandler for text added")

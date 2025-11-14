@@ -272,101 +272,80 @@ class Database:
             self.conn.rollback()
 
     def create_backup(self):
-        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP БЕЗ GITHUB"""
+        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP БЕЗ УВЕДОМЛЕНИЙ"""
         try:
             if not self.backup_enabled:
                 logger.info("⏩ Backup отключен")
                 return None
-            
-            logger.info("💾 Создание локального backup...")
-            
-            # Создаем имя файла с timestamp
-            timestamp = int(time.time())
-            backup_path = f"/tmp/barbershop_backup_{timestamp}.db"
-            
-            # Копируем файл БД
+        
+            logger.info("💾 Создание/обновление локального backup...")
+        
+            # 🎯 ИСПОЛЬЗУЕМ ОДИН ФАЙЛ ДЛЯ BACKUP (ПЕРЕЗАПИСЫВАЕМЫЙ)
+            backup_path = "/tmp/barbershop_latest_backup.db"
+        
+            # Копируем файл БД (перезаписываем если существует)
             shutil.copy2(self.db_path, backup_path)
-            
-            # Сохраняем информацию о backup
+        
+            # Получаем размер backup
+            backup_size = os.path.getsize(backup_path) // 1024  # KB
+        
+            # Сохраняем информацию о backup в БД (для ручного просмотра)
             cursor = self.execute_with_retry('''
                 INSERT INTO backup_metadata 
                 (backup_type, size_kb, success, backup_path) 
                 VALUES (?, ?, ?, ?)
-            ''', ('local_file', os.path.getsize(self.db_path) // 1024, True, backup_path))
-            
+            ''', ('latest_backup', backup_size, True, backup_path))
+        
             self.conn.commit()
-            
-            # 🧹 Очищаем старые backup файлы (оставляем последние 5)
-            self.cleanup_old_backups()
-            
+        
             self.last_backup_time = get_moscow_time()
-            logger.info(f"✅ Локальный backup создан: {backup_path}")
+            logger.info(f"✅ Локальный backup обновлен: {backup_path} ({backup_size} KB)")
             return backup_path
-            
+        
         except Exception as e:
             logger.error(f"❌ Ошибка создания локального backup: {e}")
-            
+        
             try:
                 cursor = self.execute_with_retry('''
                     INSERT INTO backup_metadata 
                     (backup_type, success, error_message) 
                     VALUES (?, ?, ?)
-                ''', ('local_file', False, str(e)))
+                ''', ('latest_backup', False, str(e)))
                 self.conn.commit()
             except:
                 pass
-            
+        
             return None
 
-    def cleanup_old_backups(self):
-        """Очищает старые backup файлы"""
-        try:
-            backup_files = glob.glob("/tmp/barbershop_backup_*.db")
-            # Сортируем по времени создания (новые в конце)
-            backup_files.sort(key=os.path.getmtime)
-            
-            # Оставляем только последние 5 файлов
-            if len(backup_files) > 5:
-                for old_backup in backup_files[:-5]:
-                    try:
-                        os.remove(old_backup)
-                        logger.info(f"🧹 Удален старый backup: {old_backup}")
-                    except Exception as e:
-                        logger.error(f"❌ Ошибка удаления backup {old_backup}: {e}")
-        except Exception as e:
-            logger.error(f"❌ Ошибка очистки backup: {e}")
-
     def restore_from_backup(self):
-        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP"""
+        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP (ОДИН ФАЙЛ)"""
         try:
             if not self.backup_enabled:
                 logger.info("⏩ Восстановление отключено")
                 return False
-            
-            # Ищем backup файлы
-            backup_files = glob.glob("/tmp/barbershop_backup_*.db")
-            if not backup_files:
-                logger.info("⏩ Нет backup файлов для восстановления")
+        
+            # 🎯 ИСПОЛЬЗУЕМ ОДИН ФАЙЛ ДЛЯ ВОССТАНОВЛЕНИЯ
+            backup_path = "/tmp/barbershop_latest_backup.db"
+        
+            if not os.path.exists(backup_path):
+                logger.info("⏩ Нет backup файла для восстановления")
                 return False
-            
-            # Берем самый новый backup
-            latest_backup = max(backup_files, key=os.path.getmtime)
-            
-            logger.info(f"🔄 Восстанавливаем из backup: {latest_backup}")
-            
+        
+            logger.info(f"🔄 Восстанавливаем из backup: {backup_path}")
+        
             # Закрываем текущее соединение
             if self.conn:
                 self.conn.close()
-            
+        
             # Копируем backup поверх текущей БД
-            shutil.copy2(latest_backup, self.db_path)
-            
+            shutil.copy2(backup_path, self.db_path)
+        
             # Переподключаемся
             self.reconnect()
-            
+        
             logger.info("✅ База данных успешно восстановлена из локального backup!")
             return True
-            
+        
         except Exception as e:
             logger.error(f"❌ Ошибка при восстановлении из backup: {e}")
             return False
@@ -387,28 +366,26 @@ class Database:
             return []
 
     def get_backup_files_info(self):
-        """Получает информацию о backup файлах"""
+        """Получает информацию о backup файле"""
         try:
-            backup_files = glob.glob("/tmp/barbershop_backup_*.db")
+            backup_path = "/tmp/barbershop_latest_backup.db"
             files_info = []
-            
-            for file_path in backup_files:
-                file_size = os.path.getsize(file_path) / 1024  # KB
-                file_time = os.path.getmtime(file_path)
+        
+            if os.path.exists(backup_path):
+                file_size = os.path.getsize(backup_path) / 1024  # KB
+                file_time = os.path.getmtime(backup_path)
                 file_date = datetime.fromtimestamp(file_time).strftime("%d.%m.%Y %H:%M")
-                
+            
                 files_info.append({
-                    'path': file_path,
+                    'path': backup_path,
                     'size_kb': round(file_size, 1),
                     'date': file_date
                 })
-            
-            # Сортируем по дате (новые первые)
-            files_info.sort(key=lambda x: x['date'], reverse=True)
+        
             return files_info
             
         except Exception as e:
-            logger.error(f"❌ Ошибка получения информации о backup файлах: {e}")
+            logger.error(f"❌ Ошибка получения информации о backup файле: {e}")
             return []
 
     def create_admin_tables(self):
@@ -535,41 +512,39 @@ class Database:
             return {'total_deleted': 0}
 
     def emergency_cleanup(self):
-        """Экстренная очистка при нехватке памяти"""
+        """Экстренная очистка при нехватке памяти БЕЗ УВЕДОМЛЕНИЙ"""
         try:
             logger.warning("🚨 ВЫПОЛНЯЕТСЯ ЭКСТРЕННАЯ ОЧИСТКА!")
-            
-            # Создаем backup перед очисткой
+        
+            # Создаем backup перед очисткой (без уведомлений)
             self.create_backup()
-            
+        
             # Удаляем очень старые записи (> 7 дней)
             moscow_time = get_moscow_time()
             cutoff_date = (moscow_time - timedelta(days=7)).strftime("%Y-%m-%d")
-            
+        
             cursor = self.execute_with_retry('''
                 DELETE FROM appointments 
                 WHERE appointment_date < ?
             ''', (cutoff_date,))
             deleted_appointments = cursor.rowcount
-            
+        
             # Очищаем старые backup метаданные
             cursor = self.execute_with_retry('''
                 DELETE FROM backup_metadata 
                 WHERE timestamp < DATE('now', '-30 days')
             ''')
             deleted_backup_meta = cursor.rowcount
-            
+        
             self.conn.commit()
-            
+        
             logger.info(f"🚨 Экстренная очистка: удалено {deleted_appointments} записей, {deleted_backup_meta} backup метаданных")
-            
+        
             return deleted_appointments + deleted_backup_meta
-            
+        
         except Exception as e:
             logger.error(f"❌ Ошибка экстренной очистки: {e}")
             return 0
-
-    # 🎯 ОСТАВШИЕСЯ МЕТОДЫ БЕЗ ИЗМЕНЕНИЙ
     
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
         """Добавляет новую запись"""
@@ -782,6 +757,12 @@ class Database:
             ''', (date, time))
             
             self.conn.commit()
+
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПОСЛЕ ОТМЕНЫ ЗАПИСИ
+            if self.backup_enabled:
+                logger.info(f"💾 Автоматический backup после отмены записи #{appointment_id}")
+                self.create_backup()
+
             return appointment
         return None
 
