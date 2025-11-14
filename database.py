@@ -272,34 +272,55 @@ class Database:
             self.conn.rollback()
 
     def create_backup(self):
-        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP БЕЗ УВЕДОМЛЕНИЙ"""
+        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP (ИСПРАВЛЕННАЯ)"""
         try:
             if not self.backup_enabled:
                 logger.info("⏩ Backup отключен")
                 return None
         
-            logger.info("💾 Создание/обновление локального backup...")
+            # 🎯 ПРОВЕРЯЕМ ЧТО В БД ЕСТЬ ДАННЫЕ ДЛЯ БЭКАПА
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            appointments_count = cursor.fetchone()[0]
         
-            # 🎯 ИСПОЛЬЗУЕМ ОДИН ФАЙЛ ДЛЯ BACKUP (ПЕРЕЗАПИСЫВАЕМЫЙ)
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            users_count = cursor.fetchone()[0]
+        
+            if appointments_count == 0 and users_count == 0:
+                logger.info("⏩ Нет данных для бэкапа")
+                return None
+        
+            logger.info(f"💾 Создание backup (записей: {appointments_count}, пользователей: {users_count})...")
+        
             backup_path = "/tmp/barbershop_latest_backup.db"
         
-            # Копируем файл БД (перезаписываем если существует)
+            # 🎯 ВАЖНО: ДЕЛАЕМ COMMIT ПЕРЕД БЭКАПОМ
+            self.conn.commit()
+        
+            # Копируем файл БД
+            import shutil
             shutil.copy2(self.db_path, backup_path)
         
-            # Получаем размер backup
-            backup_size = os.path.getsize(backup_path) // 1024  # KB
+            # Проверяем что бэкап создался и не пустой
+            if os.path.exists(backup_path):
+                backup_size = os.path.getsize(backup_path)
+                if backup_size == 0:
+                    logger.error("❌ Бэкап файл пустой!")
+                    return None
+            else:
+                logger.error("❌ Бэкап файл не создался!")
+                return None
         
-            # Сохраняем информацию о backup в БД (для ручного просмотра)
+            # Сохраняем информацию о backup в БД
             cursor = self.execute_with_retry('''
                 INSERT INTO backup_metadata 
                 (backup_type, size_kb, success, backup_path) 
                 VALUES (?, ?, ?, ?)
-            ''', ('latest_backup', backup_size, True, backup_path))
+            ''', ('latest_backup', backup_size // 1024, True, backup_path))
         
             self.conn.commit()
         
             self.last_backup_time = get_moscow_time()
-            logger.info(f"✅ Локальный backup обновлен: {backup_path} ({backup_size} KB)")
+            logger.info(f"✅ Локальный backup создан: {backup_path} ({backup_size} bytes)")
             return backup_path
         
         except Exception as e:
@@ -318,36 +339,82 @@ class Database:
             return None
 
     def restore_from_backup(self):
-        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP (ОДИН ФАЙЛ)"""
+        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP (ИСПРАВЛЕННАЯ)"""
         try:
             if not self.backup_enabled:
                 logger.info("⏩ Восстановление отключено")
                 return False
         
-            # 🎯 ИСПОЛЬЗУЕМ ОДИН ФАЙЛ ДЛЯ ВОССТАНОВЛЕНИЯ
             backup_path = "/tmp/barbershop_latest_backup.db"
         
             if not os.path.exists(backup_path):
                 logger.info("⏩ Нет backup файла для восстановления")
                 return False
         
-            logger.info(f"🔄 Восстанавливаем из backup: {backup_path}")
+            # 🎯 ПРОВЕРЯЕМ ЧТО В БЭКАПЕ ЕСТЬ ДАННЫЕ
+            import sqlite3
+            conn_check = sqlite3.connect(backup_path)
+            cursor_check = conn_check.cursor()
         
-            # Закрываем текущее соединение
+            try:
+                cursor_check.execute('SELECT COUNT(*) FROM appointments')
+                backup_appointments = cursor_check.fetchone()[0]
+            
+                cursor_check.execute('SELECT COUNT(*) FROM bot_users')
+                backup_users = cursor_check.fetchone()[0]
+            except:
+                backup_appointments = 0
+                backup_users = 0
+        
+            conn_check.close()
+        
+            if backup_appointments == 0 and backup_users == 0:
+                logger.info("⏩ Бэкап файл пустой, восстановление не требуется")
+                return False
+        
+            logger.info(f"🔄 Восстанавливаем из backup: {backup_path} (записей: {backup_appointments}, пользователей: {backup_users})")
+        
+            # 🎯 ЗАКРЫВАЕМ СОЕДИНЕНИЕ ПРАВИЛЬНО
             if self.conn:
-                self.conn.close()
+                try:
+                    self.conn.close()
+                except:
+                    pass
         
-            # Копируем backup поверх текущей БД
+            # 🎯 УДАЛЯЕМ СТАРУЮ БД И КОПИРУЕМ БЭКАП
+            try:
+                if os.path.exists(self.db_path):
+                    os.remove(self.db_path)
+                    logger.info("✅ Старая БД удалена")
+            except Exception as e:
+                logger.error(f"❌ Ошибка удаления старой БД: {e}")
+        
+            # Копируем backup
+            import shutil
             shutil.copy2(backup_path, self.db_path)
+            logger.info("✅ Бэкап скопирован")
         
-            # Переподключаемся
+            # 🎯 ПЕРЕПОДКЛЮЧАЕМСЯ И ПРОВЕРЯЕМ
             self.reconnect()
         
-            logger.info("✅ База данных успешно восстановлена из локального backup!")
+            # Проверяем что данные восстановились
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            restored_appointments = cursor.fetchone()[0]
+        
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            restored_users = cursor.fetchone()[0]
+        
+            logger.info(f"✅ Восстановление завершено! Записей: {restored_appointments}, пользователей: {restored_users}")
+        
             return True
         
         except Exception as e:
             logger.error(f"❌ Ошибка при восстановлении из backup: {e}")
+            # Пытаемся переподключиться к оригинальной БД
+            try:
+                self.reconnect()
+            except:
+                pass
             return False
 
     def get_backup_status(self):

@@ -282,6 +282,71 @@ async def backup_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Показываем статус backup
     await show_backup_status(update, context)
 
+async def check_backup_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет содержимое бэкап файла"""
+    user_id = update.effective_user.id
+    if not db.is_admin(user_id):
+        return
+
+    import sqlite3
+    import os
+    
+    backup_path = "/tmp/barbershop_latest_backup.db"
+    current_db_path = "/tmp/barbershop.db"
+    
+    if not os.path.exists(backup_path):
+        await update.message.reply_text("❌ Бэкап файл не существует")
+        return
+    
+    try:
+        # Проверяем бэкап файл
+        conn_backup = sqlite3.connect(backup_path)
+        cursor_backup = conn_backup.cursor()
+        
+        # Считаем записи в бэкапе
+        cursor_backup.execute('SELECT COUNT(*) FROM appointments')
+        backup_appointments = cursor_backup.fetchone()[0]
+        
+        cursor_backup.execute('SELECT COUNT(*) FROM bot_users') 
+        backup_users = cursor_backup.fetchone()[0]
+        
+        conn_backup.close()
+        
+        # Проверяем текущую БД
+        conn_current = sqlite3.connect(current_db_path)
+        cursor_current = conn_current.cursor()
+        
+        cursor_current.execute('SELECT COUNT(*) FROM appointments')
+        current_appointments = cursor_current.fetchone()[0]
+        
+        cursor_current.execute('SELECT COUNT(*) FROM bot_users')
+        current_users = cursor_current.fetchone()[0]
+        
+        conn_current.close()
+        
+        text = (
+            f"🔍 *Диагностика Бэкапа:*\n\n"
+            f"📁 *Бэкап файл:* {backup_path}\n"
+            f"📊 *Записей в бэкапе:* {backup_appointments}\n"
+            f"👥 *Пользователей в бэкапе:* {backup_users}\n\n"
+            f"📁 *Текущая БД:* {current_db_path}\n"
+            f"📊 *Записей сейчас:* {current_appointments}\n"
+            f"👥 *Пользователей сейчас:* {current_users}\n\n"
+        )
+        
+        if backup_appointments > 0 and current_appointments == 0:
+            text += "⚠️ *ПРОБЛЕМА:* В бэкапе есть данные, но в текущей БД нет!\n"
+            text += "Восстановление не работает!"
+        elif backup_appointments == 0:
+            text += "⚠️ *ПРОБЛЕМА:* Бэкап файл пустой!"
+        else:
+            text += "✅ Данные совпадают"
+            
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка проверки: {e}")
+
 # Настройка логирования
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
@@ -4325,6 +4390,9 @@ def main():
             application.add_handler(CommandHandler("backup", backup_info))
             application.add_handler(CommandHandler("backup_info", backup_info))
             logger.info("✅ CommandHandler 'backup' and 'backup_info' added")
+
+            application.add_handler(CommandHandler("check_backup", check_backup_content))
+            logger.info("✅ CommandHandler 'check_backup' added")
             
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             logger.info("✅ MessageHandler for text added")
