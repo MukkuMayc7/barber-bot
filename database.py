@@ -13,33 +13,21 @@ def get_moscow_time():
     return datetime.now(timezone(timedelta(hours=3)))
 
 def get_database_path():
-    """🎯 ГАРАНТИРОВАННОЕ ХРАНИЛИЩЕ ДЛЯ RENDER"""
+    """🎯 ОПТИМИЗИРОВАННЫЙ ПУТЬ ДЛЯ RENDER"""
     import os
     
-    # 🚨 ВАЖНО: На бесплатном Render ТОЛЬКО /tmp/ гарантированно сохраняется
-    # Но /tmp/ может очищаться при полном редеплое
-    # Решение: используем /tmp/ но с защитой от потерь
-    
     db_path = '/tmp/barbershop.db'
-    
-    # Проверяем существует ли БД
     db_exists = os.path.exists(db_path)
     
+    # Простая диагностика без лишних подключений
+    logger.info(f"📁 ПУТЬ К БД: {db_path}")
+    logger.info(f"📊 БД СУЩЕСТВУЕТ: {db_exists}")
+    
     if db_exists:
-        logger.info(f"✅ БД СУЩЕСТВУЕТ по пути: {db_path}")
-        # Проверяем что в БД есть данные
-        try:
-            import sqlite3
-            test_conn = sqlite3.connect(db_path)
-            cursor = test_conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM appointments")
-            count = cursor.fetchone()[0]
-            test_conn.close()
-            logger.info(f"📊 В БД записей: {count}")
-        except:
-            logger.info("📊 БД существует но пустая или повреждена")
+        size = os.path.getsize(db_path) / 1024  # KB
+        logger.info(f"📏 РАЗМЕР БД: {size:.1f} KB")
     else:
-        logger.info(f"🆕 БД НЕ СУЩЕСТВУЕТ, создаем новую: {db_path}")
+        logger.info("🆕 БД не найдена, будет создана новая")
     
     return db_path
 
