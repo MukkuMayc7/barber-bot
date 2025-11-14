@@ -25,6 +25,52 @@ import asyncio
 
 # 🎯 BACKUP ФУНКЦИИ ДЛЯ RENDER (ЛОКАЛЬНЫЕ ФАЙЛЫ)
 
+def get_database_path():
+    """🎯 ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ПУТИ К БАЗЕ ДАННЫХ"""
+    return '/tmp/barbershop.db'
+
+async def backup_database(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ЛОКАЛЬНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ БЕЗ GITHUB"""
+    try:
+        logger.info("💾 Запуск локального backup базы данных...")
+        
+        # Создаем backup через database.py
+        backup_path = db.create_backup()
+        
+        if backup_path:
+            # Получаем информацию о backup файлах
+            backup_files = db.get_backup_files_info()
+            
+            text = (
+                f"💾 *Локальный backup создан успешно!*\n\n"
+                f"📁 Файл: `{os.path.basename(backup_path)}`\n"
+                f"📏 Размер: {os.path.getsize(backup_path) / 1024:.1f} KB\n"
+                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"📊 *Всего backup файлов:* {len(backup_files)}\n"
+                f"🔄 *Автовосстановление:* ✅ Включено\n\n"
+                f"*При перезапуске бота данные будут автоматически восстановлены из последнего backup*"
+            )
+        else:
+            text = (
+                f"⚠️ *Backup не создан*\n\n"
+                f"❌ Не удалось создать локальный backup\n"
+                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"*Проверьте логи для подробной информации*"
+            )
+        
+        # Отправляем уведомление администраторам
+        notification_chats = db.get_notification_chats()
+        for chat_id in notification_chats:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления о backup: {e}")
+        
+        logger.info("✅ Локальный backup процесс завершен")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании локального backup: {e}")
+
 async def backup_database(context: ContextTypes.DEFAULT_TYPE):
     """🎯 ЛОКАЛЬНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ БЕЗ GITHUB"""
     try:
@@ -149,8 +195,8 @@ async def show_backup_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 
                 text += "\n"
     
-    # Добавляем информацию о системе
-    db_path = get_database_path()
+    # Добавляем информацию о системе (ИСПРАВЛЕННАЯ ЧАСТЬ)
+    db_path = '/tmp/barbershop.db'  # 🎯 ПРЯМОЙ ПУТЬ БЕЗ ФУНКЦИИ
     if os.path.exists(db_path):
         db_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
         size_info = f"{db_size:.2f} MB"
@@ -239,8 +285,8 @@ async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments WHERE appointment_date >= DATE("now")')
         future_appointments = cursor.fetchone()[0]
         
-        # Получаем размер БД
-        db_path = get_database_path()
+        # Получаем размер БД (ИСПРАВЛЕННАЯ ЧАСТЬ)
+        db_path = '/tmp/barbershop.db'  # 🎯 ПРЯМОЙ ПУТЬ БЕЗ ФУНКЦИИ
         if os.path.exists(db_path):
             size_mb = os.path.getsize(db_path) / (1024 * 1024)
             size_info = f"{size_mb:.2f} MB"
