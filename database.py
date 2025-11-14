@@ -571,6 +571,12 @@ class Database:
             ''', (date, time, False))
             
             self.conn.commit()
+            
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПОСЛЕ КАЖДОЙ НОВОЙ ЗАПИСИ
+            if self.backup_enabled:
+                logger.info(f"💾 Автоматический backup после создания записи #{appointment_id}")
+                self.create_backup()  # 🎯 ЭТА СТРОЧКА ДОЛЖНА БЫТЬ!
+
             return appointment_id
             
         except Exception as e:

@@ -190,7 +190,7 @@ async def create_backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🎯 ПОКАЗЫВАЕТ СТАТИСТИКУ БАЗЫ ДАННЫХ"""
+    """🎯 ПОКАЗЫВАЕТ СТАТИСТИКУ БАЗЫ ДАННЫХ (ИСПРАВЛЕННАЯ)"""
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -209,20 +209,34 @@ async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments WHERE appointment_date >= DATE("now")')
         future_appointments = cursor.fetchone()[0]
         
-        # Получаем размер БД (ИСПРАВЛЕННАЯ ЧАСТЬ)
-        db_path = '/tmp/barbershop.db'  # 🎯 ПРЯМОЙ ПУТЬ БЕЗ ФУНКЦИИ
+        # Получаем размер БД
+        db_path = '/tmp/barbershop.db'
         if os.path.exists(db_path):
             size_mb = os.path.getsize(db_path) / (1024 * 1024)
             size_info = f"{size_mb:.2f} MB"
         else:
             size_info = "не найден"
         
-        # Получаем статус backup
+        # Получаем статус backup (ИСПРАВЛЕННАЯ ЧАСТЬ)
         backup_files = db.get_backup_files_info()
         backup_status = db.get_backup_status()
-        last_backup = backup_status[0] if backup_status else None
-        last_backup_time = last_backup[0].strftime("%d.%m.%Y %H:%M") if last_backup and last_backup[0] else "нет данных"
-        last_backup_status = "✅ Успешно" if last_backup and last_backup[2] else "❌ Ошибка"
+        
+        # 🎯 ИСПРАВЛЕНИЕ: ПРАВИЛЬНАЯ ОБРАБОТКА ВРЕМЕНИ
+        last_backup_time = "нет данных"
+        last_backup_status = "нет данных"
+        
+        if backup_status:
+            last_backup = backup_status[0]
+            if last_backup and last_backup[0]:  # timestamp exists
+                timestamp = last_backup[0]
+                # Проверяем тип timestamp
+                if isinstance(timestamp, str):
+                    last_backup_time = timestamp
+                else:
+                    # Если это datetime объект
+                    last_backup_time = timestamp.strftime("%d.%m.%Y %H:%M")
+                
+                last_backup_status = "✅ Успешно" if last_backup[2] else "❌ Ошибка"
         
         text = (
             f"📊 *Статистика Базы Данных*\n\n"
