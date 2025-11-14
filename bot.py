@@ -3344,7 +3344,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"🔄 button_handler: {query.data} от пользователя {query.from_user.id}")
     
-    # 🎯 ДОБАВЛЯЕМ НОВЫЕ ОБРАБОТЧИКИ BACKUP
+    # 🎯 BACKUP ОБРАБОТЧИКИ
     if query.data == "backup_status":
         await show_backup_status(update, context)
     elif query.data == "create_backup_now":
@@ -3352,7 +3352,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "db_stats":
         await show_db_stats(update, context)
     
-    # Остальные обработчики остаются без изменений
+    # ОСНОВНЫЕ ОБРАБОТЧИКИ
     elif query.data == "main_menu":
         await show_main_menu(update, context)
     elif query.data == "make_appointment":
@@ -3360,6 +3360,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_admin = db.is_admin(user_id)
         await make_appointment_start(update, context, is_admin=is_admin)
     
+    # АДМИН-ПАНЕЛЬ
     elif query.data == "manage_admins":
         await manage_admins(update, context)
     elif query.data == "admin_list":
@@ -3372,21 +3373,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("admin_remove_confirm_"):
         try:
             admin_id = int(query.data.split("_")[3])
-            logger.info(f"🔄 admin_remove_confirm для admin_id: {admin_id}")
             await remove_admin_confirm(update, context, admin_id)
-        except (ValueError, IndexError) as e:
-            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
+        except (ValueError, IndexError):
             await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
     
     elif query.data.startswith("admin_remove_final_"):
         try:
             admin_id = int(query.data.split("_")[3])
-            logger.info(f"🔄 admin_remove_final для admin_id: {admin_id}")
             await remove_admin_final(update, context, admin_id)
-        except (ValueError, IndexError) as e:
-            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
+        except (ValueError, IndexError):
             await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
     
+    # ЗАПИСИ И РАСПИСАНИЕ
     elif query.data.startswith("service_"):
         await service_selected(update, context)
     elif query.data.startswith("date_"):
@@ -3406,13 +3404,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await cancel_appointment(update, context, appointment_id)
             except (ValueError, IndexError):
                 await query.edit_message_text("❌ Ошибка: неверный ID записи")
-    elif query.data.startswith("schedule_day_"):
-        await schedule_day_selected(update, context)
-
+    
+    # СТАТИСТИКА И ОТЧЕТЫ
     elif query.data == "weekly_report":
         await weekly_report(update, context)
     elif query.data == "show_statistics":
         await show_statistics(update, context)
+    
+    # ГРАФИК РАБОТЫ
+    elif query.data.startswith("schedule_day_"):
+        await schedule_day_selected(update, context)
     elif query.data.startswith("schedule_working_"):
         await schedule_working_selected(update, context)
     elif query.data.startswith("schedule_off_"):
@@ -3423,12 +3424,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await schedule_end_selected(update, context)
     elif query.data == "manage_schedule":
         await manage_schedule(update, context)
-    
     elif query.data == "schedule_cancel_appointments":
         await handle_schedule_cancel_appointments(update, context)
     elif query.data == "schedule_cancel_changes":
         await handle_schedule_cancel_changes(update, context)
     
+    # ВИЗУАЛЬНОЕ РАСПИСАНИЕ
     elif query.data.startswith("call_"):
         await handle_schedule_actions(update, context)
     elif query.data.startswith("edit_"):
@@ -3457,113 +3458,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await called_confirmation(update, context)
     elif query.data == "confirm_cancel_slot":
         await confirm_cancel_slot(update, context)
-    else:
-        logger.warning(f"⚠️ Неизвестный callback_data: {query.data}")
     
-    if query.data == "main_menu":
-        await show_main_menu(update, context)
-    elif query.data == "make_appointment":
-        user_id = query.from_user.id
-        is_admin = db.is_admin(user_id)
-        await make_appointment_start(update, context, is_admin=is_admin)
-    
-    elif query.data == "manage_admins":
-        await manage_admins(update, context)
-    elif query.data == "admin_list":
-        await show_admin_list(update, context)
-    elif query.data == "admin_add":
-        await add_admin_start(update, context)
-    elif query.data == "admin_remove":
-        await remove_admin_start(update, context)
-    
-    elif query.data.startswith("admin_remove_confirm_"):
-        try:
-            admin_id = int(query.data.split("_")[3])
-            logger.info(f"🔄 admin_remove_confirm для admin_id: {admin_id}")
-            await remove_admin_confirm(update, context, admin_id)
-        except (ValueError, IndexError) as e:
-            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
-            await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
-    
-    elif query.data.startswith("admin_remove_final_"):
-        try:
-            admin_id = int(query.data.split("_")[3])
-            logger.info(f"🔄 admin_remove_final для admin_id: {admin_id}")
-            await remove_admin_final(update, context, admin_id)
-        except (ValueError, IndexError) as e:
-            logger.error(f"Ошибка извлечения admin_id из {query.data}: {e}")
-            await query.answer("❌ Ошибка при обработке запроса", show_alert=True)
-    
-    elif query.data.startswith("service_"):
-        await service_selected(update, context)
-    elif query.data.startswith("date_"):
-        await date_selected(update, context)
-    elif query.data.startswith("time_"):
-        await time_selected(update, context)
-    elif query.data.startswith("cancel_"):
-        if query.data.startswith("cancel_admin_"):
-            try:
-                appointment_id = int(query.data.split("_")[2])
-                await cancel_appointment(update, context, appointment_id)
-            except (ValueError, IndexError):
-                await query.edit_message_text("❌ Ошибка: неверный ID записи")
-        else:
-            try:
-                appointment_id = int(query.data.split("_")[1])
-                await cancel_appointment(update, context, appointment_id)
-            except (ValueError, IndexError):
-                await query.edit_message_text("❌ Ошибка: неверный ID записи")
-    elif query.data.startswith("schedule_day_"):
-        await schedule_day_selected(update, context)
-
-    elif query.data == "weekly_report":
-        await weekly_report(update, context)
-    elif query.data == "show_statistics":
-        await show_statistics(update, context)
-    elif query.data.startswith("schedule_working_"):
-        await schedule_working_selected(update, context)
-    elif query.data.startswith("schedule_off_"):
-        await schedule_off_selected(update, context)
-    elif query.data.startswith("schedule_start_"):
-        await schedule_start_selected(update, context)
-    elif query.data.startswith("schedule_end_"):
-        await schedule_end_selected(update, context)
-    elif query.data == "manage_schedule":
-        await manage_schedule(update, context)
-    
-    elif query.data == "schedule_cancel_appointments":
-        await handle_schedule_cancel_appointments(update, context)
-    elif query.data == "schedule_cancel_changes":
-        await handle_schedule_cancel_changes(update, context)
-    
-    elif query.data.startswith("call_"):
-        await handle_schedule_actions(update, context)
-    elif query.data.startswith("edit_"):
-        await handle_schedule_actions(update, context)
-    elif query.data.startswith("cancel_slot_"):
-        await handle_schedule_actions(update, context)
-    elif query.data == "refresh_today":
-        await handle_schedule_actions(update, context)
-    elif query.data == "all_contacts":
-        await handle_schedule_actions(update, context)
-    elif query.data == "show_today_visual":
-        await handle_schedule_actions(update, context)
-    
-    elif query.data == "week_appointments":
-        await show_week_appointments(update, context)
-    elif query.data.startswith("week_day_"):
-        date_str = query.data[9:]
-        await show_day_appointments_visual(update, context, date_str)
-    elif query.data.startswith("refresh_day_"):
-        date_str = query.data[12:]
-        await show_day_appointments_visual(update, context, date_str)
-    elif query.data.startswith("day_contacts_"):
-        date_str = query.data[13:]
-        await show_day_contacts(update, context, date_str)
-    elif query.data.startswith("called_"):
-        await called_confirmation(update, context)
-    elif query.data == "confirm_cancel_slot":
-        await confirm_cancel_slot(update, context)
     else:
         logger.warning(f"⚠️ Неизвестный callback_data: {query.data}")
 
