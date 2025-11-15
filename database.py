@@ -306,6 +306,10 @@ class Database:
             logger.info(f"💾 Создание backup (записей: {appointments_count}, пользователей: {users_count})...")
         
             backup_path = "/tmp/barbershop_latest_backup.db"
+
+            # 🎯 ДИАГНОСТИКА: ПРОВЕРЯЕМ ДОСТУПНОСТЬ /tmp/
+            logger.info(f"🔍 Проверка пути backup: {backup_path}")
+            logger.info(f"📁 Директория /tmp/ доступна: {os.path.exists('/tmp')}")
         
             # 🎯 ВАЖНО: ДЕЛАЕМ COMMIT ПЕРЕД БЭКАПОМ
             self.conn.commit()
@@ -313,10 +317,35 @@ class Database:
             # 🎯 ПРОВЕРЯЕМ РАЗМЕР ОСНОВНОЙ БД ПЕРЕД BACKUP
             original_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
             logger.info(f"📊 Размер основной БД перед backup: {original_size} bytes")
+
+            # 🎯 ДИАГНОСТИКА: ПРОБУЕМ СОЗДАТЬ ТЕСТОВЫЙ ФАЙЛ
+            try:
+                test_file = "/tmp/test_backup_write.db"
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.unlink(test_file)
+                logger.info("✅ /tmp/ доступен для записи")
+            except Exception as e:
+                logger.error(f"❌ /tmp/ НЕ доступен для записи: {e}")
+                return None
         
             # Копируем файл БД (перезаписываем существующий)
             import shutil
             shutil.copy2(self.db_path, backup_path)
+
+            # 🎯 ДИАГНОСТИКА: ПРОВЕРЯЕМ РЕЗУЛЬТАТ КОПИРОВАНИЯ
+            if os.path.exists(backup_path):
+                backup_size = os.path.getsize(backup_path)
+                logger.info(f"✅ Файл backup создан: {backup_size} bytes")
+            
+                if backup_size == 0:
+                    logger.error("❌ Бэкап файл пустой!")
+                    return None
+                
+                logger.info(f"📊 ДИАГНОСТИКА: оригинал={original_size} bytes, backup={backup_size} bytes")
+            else:
+                logger.error("❌ Бэкап файл не создался после shutil.copy2!")
+                return None
         
             # Проверяем что бэкап создался и не пустой
             if os.path.exists(backup_path):
@@ -357,6 +386,8 @@ class Database:
         
         except Exception as e:
             logger.error(f"❌ Ошибка создания локального backup: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")  # 🎯 ДОБАВЛЕНО ДЛЯ ДИАГНОСТИКИ
         
             try:
                 cursor = self.execute_with_retry('''
