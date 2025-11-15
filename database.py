@@ -37,8 +37,8 @@ def get_database_path():
     logger.info(f"📊 БД СУЩЕСТВУЕТ: {db_exists}")
     
     if db_exists:
-        size = os.path.getsize(db_path) / 1024  # KB
-        logger.info(f"📏 РАЗМЕР БД: {size:.1f} KB")
+        size = os.path.getsize(db_path) / (1024 * 1024)  # MB
+        logger.info(f"📏 РАЗМЕР БД: {size:.2f} MB")
     else:
         logger.info("🆕 БД не найдена, будет создана новая")
     
@@ -309,6 +309,10 @@ class Database:
         
             # 🎯 ВАЖНО: ДЕЛАЕМ COMMIT ПЕРЕД БЭКАПОМ
             self.conn.commit()
+            
+            # 🎯 ПРОВЕРЯЕМ РАЗМЕР ОСНОВНОЙ БД ПЕРЕД BACKUP
+            original_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
+            logger.info(f"📊 Размер основной БД перед backup: {original_size} bytes")
         
             # Копируем файл БД (перезаписываем существующий)
             import shutil
@@ -322,6 +326,18 @@ class Database:
                     return None
                     
                 logger.info(f"✅ Бэкап создан/обновлен: {backup_size} bytes")
+                
+                # 🎯 ДЕТАЛЬНАЯ ДИАГНОСТИКА
+                logger.info(f"📊 ДИАГНОСТИКА: оригинал={original_size} bytes, backup={backup_size} bytes")
+                
+                if backup_size < 1000:  # Меньше 1KB - подозрительно
+                    logger.warning(f"⚠️ Backup файл слишком мал: {backup_size} bytes")
+                    # Проверим содержимое таблиц
+                    cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
+                    appt_count = cursor.fetchone()[0]
+                    cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users') 
+                    user_count = cursor.fetchone()[0]
+                    logger.info(f"📊 Данные в БД: записей={appt_count}, пользователей={user_count}")
             else:
                 logger.error("❌ Бэкап файл не создался!")
                 return None
@@ -456,7 +472,7 @@ class Database:
         
             if os.path.exists(backup_path):
                 file_size = os.path.getsize(backup_path) / 1024  # KB
-                file_time = os.path.getmtime(backup_path)
+                file_time = os.path.getmtime(back_path)
                 file_date = datetime.fromtimestamp(file_time).strftime("%d.%m.%Y %H:%M")
             
                 files_info.append({
@@ -1152,7 +1168,7 @@ class Database:
             return None
 
     def get_weekly_stats(self):
-        """Собирает статистику за прошедшую неделю"""
+        """Собирает статистика за прошедшую неделю"""
         try:
             end_date = get_moscow_time().date()
             start_date = end_date - timedelta(days=7)

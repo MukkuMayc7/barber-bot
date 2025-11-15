@@ -119,17 +119,25 @@ async def show_backup_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 
                 text += "\n"
     
-    # Добавляем информацию о системе (ИСПРАВЛЕННАЯ ЧАСТЬ)
-    db_path = '/tmp/barbershop.db'  # 🎯 ПРЯМОЙ ПУТЬ БЕЗ ФУНКЦИИ
+    # 🎯 ИСПРАВЛЕНИЕ: ПРАВИЛЬНЫЙ РАСЧЕТ РАЗМЕРА ОСНОВНОЙ БД
+    db_path = '/tmp/barbershop.db'
     if os.path.exists(db_path):
         db_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
         size_info = f"{db_size:.2f} MB"
+        
+        # 🎯 ДОБАВЛЯЕМ ДИАГНОСТИКУ
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+        appointments_count = cursor.fetchone()[0]
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+        users_count = cursor.fetchone()[0]
+        
+        text += f"💾 *Текущая БД:* {size_info} ({appointments_count} записей, {users_count} пользователей)\n"
     else:
         size_info = "не найден"
+        text += f"💾 *Текущая БД:* {size_info}\n"
     
-    text += f"💾 *Текущая БД:* {size_info}\n"
     text += f"🔄 *Автовосстановление:* ✅ Включено\n"
-    text += f"⏰ *Следующий backup:* через 6 часов\n"
+    text += f"⏰ *Следующий backup:* при следующем изменении\n"  # Изменено с "через 6 часов"
     text += f"📝 *Тип:* Локальные файлы (/tmp/)"
     
     keyboard = [
