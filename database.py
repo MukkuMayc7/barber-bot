@@ -104,16 +104,24 @@ class Database:
                 raise
 
     def has_data(self):
-        """Проверяет, есть ли данные в БД"""
+        """Проверяет, есть ли РЕАЛЬНЫЕ данные в БД (а не только файл)"""
         try:
+            # 🎯 ПРОВЕРЯЕМ РЕАЛЬНЫЕ ДАННЫЕ В ТАБЛИЦАХ
             cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
             appointments_count = cursor.fetchone()[0]
-            
+        
             cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
             users_count = cursor.fetchone()[0]
-            
-            return appointments_count > 0 or users_count > 0
-        except:
+        
+            has_real_data = appointments_count > 0 or users_count > 0
+        
+            logger.info(f"🔍 ПРОВЕРКА ДАННЫХ: файл существует, записей={appointments_count}, пользователей={users_count}, есть_данные={has_real_data}")
+        
+            return has_real_data  # 🎯 Возвращаем наличие РЕАЛЬНЫХ данных
+        
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке данных в БД: {e}")
+            # При ошибке считаем что данных нет - можно восстанавливать
             return False
 
     def check_connection(self):
