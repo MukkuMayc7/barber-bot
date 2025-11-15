@@ -4205,6 +4205,55 @@ async def debug_backup_files(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.message.reply_text(text, parse_mode='Markdown')
 
+async def check_real_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПРОВЕРКА РЕАЛЬНЫХ ДАННЫХ В БД"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой команде")
+        return
+    
+    try:
+        # Проверяем таблицу appointments
+        cursor = db.execute_with_retry('SELECT id, user_name, phone, service, appointment_date, appointment_time FROM appointments')
+        all_appointments = cursor.fetchall()
+        
+        # Проверяем таблицу bot_users
+        cursor = db.execute_with_retry('SELECT user_id, username, first_name, last_name FROM bot_users')
+        all_users = cursor.fetchall()
+        
+        text = f"🔍 *РЕАЛЬНЫЕ ДАННЫЕ В БД:*\n\n"
+        
+        text += f"📅 *Записи (всего {len(all_appointments)}):*\n"
+        if all_appointments:
+            for appt in all_appointments:
+                appt_id, user_name, phone, service, date, time = appt
+                text += f"• #{appt_id}: {user_name} ({phone}) - {service} - {date} {time}\n"
+        else:
+            text += "❌ Нет записей\n"
+        
+        text += f"\n👥 *Пользователи (всего {len(all_users)}):*\n"
+        if all_users:
+            for user in all_users:
+                user_id, username, first_name, last_name = user
+                text += f"• {user_id}: {first_name} {last_name} (@{username})\n"
+        else:
+            text += "❌ Нет пользователей\n"
+        
+        # Проверяем файлы
+        db_path = '/tmp/barbershop.db'
+        backup_path = '/tmp/barbershop_latest_backup.db'
+        
+        text += f"\n📁 *Файлы:*\n"
+        text += f"• Основная БД: {os.path.exists(db_path)} ({os.path.getsize(db_path) if os.path.exists(db_path) else 0} bytes)\n"
+        text += f"• Backup БД: {os.path.exists(backup_path)} ({os.path.getsize(backup_path) if os.path.exists(backup_path) else 0} bytes)\n"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки данных: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
@@ -4495,6 +4544,9 @@ def main():
             application.add_handler(CommandHandler("check_backup", check_backup_content))
             application.add_handler(CommandHandler("debug_backup", debug_backup_files))
             logger.info("✅ CommandHandler 'check_backup' added")
+            application.add_handler(CommandHandler("test_restore", test_restore))
+            application.add_handler(CommandHandler("check_data", check_real_data))
+            logger.info("✅ CommandHandler 'check_data' added")
             
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             logger.info("✅ MessageHandler for text added")
