@@ -465,24 +465,55 @@ class Database:
             return []
 
     def get_backup_files_info(self):
-        """Получает информацию о backup файле"""
+        """🎯 ИСПРАВЛЕННАЯ: Получает информацию о backup файлах"""
         try:
             backup_path = "/tmp/barbershop_latest_backup.db"
             files_info = []
+    
+            logger.info(f"🔍 Поиск backup файла: {backup_path}")
+            logger.info(f"📁 Файл существует: {os.path.exists(backup_path)}")
         
             if os.path.exists(backup_path):
                 file_size = os.path.getsize(backup_path) / 1024  # KB
-                file_time = os.path.getmtime(back_path)
+                file_time = os.path.getmtime(backup_path)
                 file_date = datetime.fromtimestamp(file_time).strftime("%d.%m.%Y %H:%M")
-            
+        
                 files_info.append({
                     'path': backup_path,
                     'size_kb': round(file_size, 1),
                     'date': file_date
                 })
-        
-            return files_info
             
+                logger.info(f"✅ Найден backup файл: {file_size:.1f} KB, {file_date}")
+            else:
+                logger.warning("⚠️ Backup файл не найден!")
+            
+                # 🎯 ПОИСК ВСЕХ ФАЙЛОВ BACKUP В /tmp/
+                import glob
+                backup_patterns = [
+                    "/tmp/barbershop_latest_backup.db",
+                    "/tmp/barbershop_latest_backup.db.*",
+                    "/tmp/barbershop_backup_*.db"
+                ]
+            
+                for pattern in backup_patterns:
+                    found_files = glob.glob(pattern)
+                    for file_path in found_files:
+                        if os.path.isfile(file_path):
+                            file_size = os.path.getsize(file_path) / 1024  # KB
+                            file_time = os.path.getmtime(file_path)
+                            file_date = datetime.fromtimestamp(file_time).strftime("%d.%m.%Y %H:%M")
+                        
+                            files_info.append({
+                                'path': file_path,
+                                'size_kb': round(file_size, 1),
+                                'date': file_date
+                            })
+                            logger.info(f"🔍 Найден альтернативный backup: {os.path.basename(file_path)} - {file_size:.1f} KB")
+    
+            logger.info(f"📊 Итого найдено backup файлов: {len(files_info)}")
+            return files_info
+        
         except Exception as e:
             logger.error(f"❌ Ошибка получения информации о backup файле: {e}")
             return []

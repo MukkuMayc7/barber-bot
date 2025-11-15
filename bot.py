@@ -220,12 +220,17 @@ async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем размер БД
         db_path = '/tmp/barbershop.db'
         if os.path.exists(db_path):
-            size_mb = os.path.getsize(db_path) / (1024 * 1024)
+            size_bytes = os.path.getsize(db_path)
+            size_mb = size_bytes / (1024 * 1024)
             size_info = f"{size_mb:.2f} MB"
+            
+            # 🎯 ДИАГНОСТИКА: Почему размер 0.00 MB?
+            logger.info(f"📊 ДИАГНОСТИКА РАЗМЕРА БД: {size_bytes} bytes = {size_mb:.6f} MB")
         else:
             size_info = "не найден"
+            size_bytes = 0
         
-        # Получаем статус backup (ИСПРАВЛЕННАЯ ЧАСТЬ)
+        # 🎯 ИСПРАВЛЕННАЯ ЧАСТЬ: Получаем статус backup
         backup_files = db.get_backup_files_info()
         backup_status = db.get_backup_status()
         
@@ -258,7 +263,8 @@ async def show_db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Файлов backup: {len(backup_files)}\n"
             f"• Последний backup: {last_backup_time}\n"
             f"• Статус: {last_backup_status}\n"
-            f"• Размер БД: {size_info}\n\n"
+            f"• Размер БД: {size_info}\n"
+            f"• Размер в байтах: {size_bytes} bytes\n\n"  # 🎯 ДОБАВЛЕНО ДЛЯ ДИАГНОСТИКИ
             f"🛠 *Render Free Tier:*\n"
             f"• Память: 512 MB\n"
             f"• Хранилище: Эфемерное (/tmp/)\n"
@@ -4142,6 +4148,63 @@ async def scheduled_restart(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка при плановом перезапуске: {e}")
 
+async def debug_backup_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ДИАГНОСТИЧЕСКАЯ КОМАНДА ДЛЯ ПРОВЕРКИ ФАЙЛОВ BACKUP"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой команде")
+        return
+    
+    import glob
+    
+    text = "🔍 *Диагностика файлов backup:*\n\n"
+    
+    # Проверяем основной файл БД
+    db_path = '/tmp/barbershop.db'
+    if os.path.exists(db_path):
+        size = os.path.getsize(db_path)
+        text += f"📁 *Основная БД:* {db_path}\n"
+        text += f"   📏 Размер: {size} bytes ({size/1024/1024:.6f} MB)\n"
+        text += f"   ✅ Существует: Да\n\n"
+    else:
+        text += f"📁 *Основная БД:* {db_path}\n"
+        text += f"   ❌ Существует: Нет\n\n"
+    
+    # Проверяем backup файлы
+    backup_files = []
+    patterns = [
+        "/tmp/barbershop_latest_backup.db",
+        "/tmp/barbershop_latest_backup.db.*", 
+        "/tmp/barbershop_backup_*.db",
+        "/tmp/*.db"  # Все файлы .db в /tmp/
+    ]
+    
+    for pattern in patterns:
+        found = glob.glob(pattern)
+        for file_path in found:
+            if os.path.isfile(file_path):
+                size = os.path.getsize(file_path)
+                mtime = os.path.getmtime(file_path)
+                date = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+                backup_files.append((file_path, size, date))
+    
+    if backup_files:
+        text += f"📁 *Найдено backup файлов:* {len(backup_files)}\n\n"
+        for i, (file_path, size, date) in enumerate(backup_files, 1):
+            text += f"{i}. `{os.path.basename(file_path)}`\n"
+            text += f"   📏 {size} bytes ({size/1024:.1f} KB)\n"
+            text += f"   🕐 {date}\n"
+            text += f"   📁 {file_path}\n\n"
+    else:
+        text += "❌ *Backup файлы не найдены!*\n\n"
+    
+    # Проверяем через функцию из БД
+    db_backup_files = db.get_backup_files_info()
+    text += f"📊 *Через db.get_backup_files_info():* {len(db_backup_files)} файлов\n"
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
@@ -4430,6 +4493,7 @@ def main():
             logger.info("✅ CommandHandler 'backup' and 'backup_info' added")
 
             application.add_handler(CommandHandler("check_backup", check_backup_content))
+            application.add_handler(CommandHandler("debug_backup", debug_backup_files))
             logger.info("✅ CommandHandler 'check_backup' added")
             
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
