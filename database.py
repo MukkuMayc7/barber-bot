@@ -17,6 +17,20 @@ def get_moscow_time():
 def get_database_path():
     """🎯 ОПТИМИЗИРОВАННЫЙ ПУТЬ ДЛЯ RENDER"""
     db_path = '/tmp/barbershop.db'
+    
+    # Проверяем доступность /tmp/ для записи
+    try:
+        test_file = '/tmp/test_write_barbershop'
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.unlink(test_file)
+        logger.info("✅ /tmp/ доступен для записи")
+    except Exception as e:
+        logger.error(f"❌ /tmp/ не доступен для записи: {e}")
+        # Fallback на текущую директорию
+        db_path = 'barbershop.db'
+        logger.info(f"🔄 Используем fallback путь: {db_path}")
+    
     db_exists = os.path.exists(db_path)
     
     logger.info(f"📁 ПУТЬ К БД: {db_path}")
@@ -272,7 +286,7 @@ class Database:
             self.conn.rollback()
 
     def create_backup(self):
-        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP (ИСПРАВЛЕННАЯ)"""
+        """🎯 СОЗДАЕТ ЛОКАЛЬНЫЙ BACKUP (ПЕРЕЗАПИСЫВАЕТ СУЩЕСТВУЮЩИЙ)"""
         try:
             if not self.backup_enabled:
                 logger.info("⏩ Backup отключен")
@@ -296,7 +310,7 @@ class Database:
             # 🎯 ВАЖНО: ДЕЛАЕМ COMMIT ПЕРЕД БЭКАПОМ
             self.conn.commit()
         
-            # Копируем файл БД
+            # Копируем файл БД (перезаписываем существующий)
             import shutil
             shutil.copy2(self.db_path, backup_path)
         
@@ -306,6 +320,8 @@ class Database:
                 if backup_size == 0:
                     logger.error("❌ Бэкап файл пустой!")
                     return None
+                    
+                logger.info(f"✅ Бэкап создан/обновлен: {backup_size} bytes")
             else:
                 logger.error("❌ Бэкап файл не создался!")
                 return None
@@ -315,12 +331,12 @@ class Database:
                 INSERT INTO backup_metadata 
                 (backup_type, size_kb, success, backup_path) 
                 VALUES (?, ?, ?, ?)
-            ''', ('latest_backup', backup_size // 1024, True, backup_path))
+            ''', ('auto_backup', backup_size // 1024, True, backup_path))
         
             self.conn.commit()
         
             self.last_backup_time = get_moscow_time()
-            logger.info(f"✅ Локальный backup создан: {backup_path} ({backup_size} bytes)")
+            logger.info(f"✅ Локальный backup создан/обновлен: {backup_path} ({backup_size} bytes)")
             return backup_path
         
         except Exception as e:
@@ -331,7 +347,7 @@ class Database:
                     INSERT INTO backup_metadata 
                     (backup_type, success, error_message) 
                     VALUES (?, ?, ?)
-                ''', ('latest_backup', False, str(e)))
+                ''', ('auto_backup', False, str(e)))
                 self.conn.commit()
             except:
                 pass
@@ -339,7 +355,7 @@ class Database:
             return None
 
     def restore_from_backup(self):
-        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP (ИСПРАВЛЕННАЯ)"""
+        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP"""
         try:
             if not self.backup_enabled:
                 logger.info("⏩ Восстановление отключено")
@@ -612,9 +628,39 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка экстренной очистки: {e}")
             return 0
+
+    def emergency_size_management(self):
+        """🎯 ЭКСТРЕННОЕ УПРАВЛЕНИЕ РАЗМЕРОМ БД ПРИ ПРИБЛИЖЕНИИ К ЛИМИТУ"""
+        try:
+            db_size = os.path.getsize(self.db_path) / (1024 * 1024)  # MB
+            
+            if db_size > 8:  # Близко к лимиту Render
+                logger.warning(f"🚨 Экстренная очистка! Размер БД: {db_size:.1f}MB")
+                
+                # 1. Создаем backup
+                self.create_backup()
+                
+                # 2. Агрессивная очистка
+                moscow_time = get_moscow_time()
+                cutoff_date = (moscow_time - timedelta(days=3)).strftime("%Y-%m-%d")
+                
+                cursor = self.execute_with_retry('''
+                    DELETE FROM appointments 
+                    WHERE appointment_date < ?
+                ''', (cutoff_date,))
+                
+                deleted = cursor.rowcount
+                self.conn.commit()
+                
+                logger.info(f"🚨 Экстренно удалено {deleted} записей")
+                return deleted
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка экстренного управления размером: {e}")
+            return 0
     
     def add_appointment(self, user_id, user_name, user_username, phone, service, date, time):
-        """Добавляет новую запись"""
+        """🎯 ДОБАВЛЯЕТ НОВУЮ ЗАПИСЬ С BACKUP"""
         try:
             # Проверяем, не занято ли время
             cursor = self.execute_with_retry('''
@@ -639,10 +685,10 @@ class Database:
             
             self.conn.commit()
             
-            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПОСЛЕ КАЖДОЙ НОВОЙ ЗАПИСИ
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПРИ СОЗДАНИИ НОВОЙ ЗАПИСИ
             if self.backup_enabled:
                 logger.info(f"💾 Автоматический backup после создания записи #{appointment_id}")
-                self.create_backup()  # 🎯 ЭТА СТРОЧКА ДОЛЖНА БЫТЬ!
+                self.create_backup()
 
             return appointment_id
             
@@ -803,7 +849,7 @@ class Database:
         return cursor.fetchall()
 
     def cancel_appointment(self, appointment_id, user_id=None):
-        """Отменяет запись"""
+        """🎯 ОТМЕНЯЕТ ЗАПИСЬ С BACKUP"""
         cursor = self.execute_with_retry('''
             SELECT user_id, user_name, phone, service, appointment_date, appointment_time 
             FROM appointments WHERE id = ?
@@ -831,7 +877,7 @@ class Database:
             
             self.conn.commit()
 
-            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПОСЛЕ ОТМЕНЫ ЗАПИСИ
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПРИ ОТМЕНЕ ЗАПИСИ
             if self.backup_enabled:
                 logger.info(f"💾 Автоматический backup после отмены записи #{appointment_id}")
                 self.create_backup()
@@ -1003,7 +1049,7 @@ class Database:
             return []
 
     def cancel_appointments_by_ids(self, appointment_ids):
-        """Массово отменяет записи по списку ID"""
+        """🎯 МАССОВО ОТМЕНЯЕТ ЗАПИСИ ПО СПИСКУ ID С BACKUP"""
         try:
             canceled_appointments = []
             
@@ -1021,6 +1067,12 @@ class Database:
                     canceled_appointments.append(appointment)
             
             self.conn.commit()
+
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПРИ МАССОВОЙ ОТМЕНЕ ЗАПИСЕЙ
+            if self.backup_enabled and canceled_appointments:
+                logger.info(f"💾 Автоматический backup после массовой отмены {len(canceled_appointments)} записей")
+                self.create_backup()
+            
             return canceled_appointments
             
         except Exception as e:
@@ -1028,7 +1080,7 @@ class Database:
             return []
 
     def add_admin(self, admin_id, username, first_name, last_name, added_by):
-        """Добавляет администратора"""
+        """🎯 ДОБАВЛЯЕТ АДМИНИСТРАТОРА С BACKUP"""
         try:
             cursor = self.execute_with_retry('''
                 INSERT INTO bot_admins (admin_id, username, first_name, last_name, added_by)
@@ -1038,6 +1090,12 @@ class Database:
             self.conn.commit()
             
             added = cursor.rowcount > 0
+
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПРИ ДОБАВЛЕНИИ АДМИНИСТРАТОРА
+            if self.backup_enabled and added:
+                logger.info(f"💾 Автоматический backup после добавления администратора {admin_id}")
+                self.create_backup()
+            
             return added
             
         except Exception as e:
@@ -1046,7 +1104,7 @@ class Database:
             return False
 
     def remove_admin(self, admin_id):
-        """Удаляет администратора"""
+        """🎯 УДАЛЯЕТ АДМИНИСТРАТОРА С BACKUP"""
         try:
             if hasattr(config, 'PROTECTED_ADMINS') and admin_id in config.PROTECTED_ADMINS:
                 return False
@@ -1055,6 +1113,12 @@ class Database:
             self.conn.commit()
             
             deleted = cursor.rowcount > 0
+
+            # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПРИ УДАЛЕНИИ АДМИНИСТРАТОРА
+            if self.backup_enabled and deleted:
+                logger.info(f"💾 Автоматический backup после удаления администратора {admin_id}")
+                self.create_backup()
+            
             return deleted
             
         except Exception as e:

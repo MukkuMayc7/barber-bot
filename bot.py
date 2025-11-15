@@ -1265,10 +1265,16 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         logger.info("🔄 Пытаемся создать запись в БД...")
+        
+        # 🎯 ИСПРАВЛЕНИЕ: Всегда используем валидный user_id
+        appointment_user_id = user.id  # ✅ Всегда берем ID текущего пользователя
+        appointment_user_name = "Администратор (ручная запись)" if is_admin_manual else user.full_name
+        appointment_username = "admin_manual" if is_admin_manual else user.username
+        
         appointment_id = db.add_appointment(
-            user_id=user.id if not is_admin_manual else 0,
-            user_name="Администратор" if is_admin_manual else user.full_name,
-            user_username="admin_manual" if is_admin_manual else user.username,
+            user_id=appointment_user_id,
+            user_name=appointment_user_name,
+            user_username=appointment_username,
             phone=normalized_phone,
             service=user_data['service'],
             date=user_data['date'],
@@ -1297,8 +1303,8 @@ async def phone_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await send_new_appointment_notification(
             context, 
-            user_name="Администратор (ручная запись)" if is_admin_manual else user.full_name,
-            user_username="admin_manual" if is_admin_manual else user.username,
+            user_name=appointment_user_name,
+            user_username=appointment_username,
             phone=normalized_phone,
             service=user_data['service'],
             date=f"{day_name} {display_date}",
@@ -2918,7 +2924,7 @@ async def remove_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
             raise
 
 async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id: int):
-    """Финальное удаление администратора"""
+    """Финальное удаление администратора С BACKUP"""
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -2940,6 +2946,11 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if deleted:
         text = f"✅ Администратор с ID {admin_id} удален"
         logger.info(f"✅ Администратор {admin_id} удален пользователем {user_id}")
+        
+        # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ИЗМЕНЕНИЯ АДМИНИСТРАТОРОВ
+        backup_path = db.create_backup()
+        if backup_path:
+            logger.info(f"💾 Backup создан после удаления администратора {admin_id}")
     else:
         text = "❌ Администратор не найден"
     
@@ -2955,7 +2966,7 @@ async def remove_admin_final(update: Update, context: ContextTypes.DEFAULT_TYPE,
             raise
 
 async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик ввода ID администратора"""
+    """Обработчик ввода ID администратора С BACKUP"""
     user_id = update.effective_user.id
     text = update.message.text.strip()
     
@@ -3008,6 +3019,12 @@ async def handle_admin_id_input(update: Update, context: ContextTypes.DEFAULT_TY
                 display_name += f" (@{username})"
             
             logger.info(f"✅ Администратор {new_admin_id} успешно добавлен")
+            
+            # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ДОБАВЛЕНИЯ АДМИНИСТРАТОРА
+            backup_path = db.create_backup()
+            if backup_path:
+                logger.info(f"💾 Backup создан после добавления администратора {new_admin_id}")
+            
             await update.message.reply_text(
                 f"✅ *Новый администратор добавлен!*\n\n"
                 f"👤 *Имя:* {display_name}\n"
@@ -3168,6 +3185,11 @@ async def schedule_end_selected(update: Update, context: ContextTypes.DEFAULT_TY
     
     db.set_work_schedule(weekday, start_time, end_time, True)
     
+    # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ИЗМЕНЕНИЯ ГРАФИКА РАБОТЫ
+    backup_path = db.create_backup()
+    if backup_path:
+        logger.info(f"💾 Backup создан после установки графика для {day_name}")
+    
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -3204,6 +3226,11 @@ async def schedule_off_selected(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     db.set_work_schedule(weekday, "10:00", "20:00", False)
+    
+    # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ИЗМЕНЕНИЯ ГРАФИКА РАБОТЫ
+    backup_path = db.create_backup()
+    if backup_path:
+        logger.info(f"💾 Backup создан после установки выходного для {day_name}")
     
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -3268,7 +3295,7 @@ async def show_schedule_conflict_warning(update: Update, context: ContextTypes.D
             raise
 
 async def handle_schedule_cancel_appointments(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик отмены конфликтующих записей"""
+    """Обработчик отмены конфликтующих записей С BACKUP"""
     query = update.callback_query
     
     if 'pending_schedule' not in context.user_data or 'conflicting_appointments' not in context.user_data:
@@ -3300,6 +3327,11 @@ async def handle_schedule_cancel_appointments(update: Update, context: ContextTy
         schedule_info = f"{pending_schedule['start_time']} - {pending_schedule['end_time']}"
     else:
         schedule_info = "выходной"
+    
+    # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ИЗМЕНЕНИЯ ГРАФИКА РАБОТЫ
+    backup_path = db.create_backup()
+    if backup_path:
+        logger.info(f"💾 Backup создан после изменения графика работы для {day_name}")
     
     keyboard = [[InlineKeyboardButton("🔙 Назад к графику", callback_data="manage_schedule")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -3528,7 +3560,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"⚠️ Неизвестный callback_data: {query.data}")
 
 async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
-    """Обработчик отмены записи"""
+    """Обработчик отмены записи С BACKUP"""
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -3549,6 +3581,11 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
                         raise
                 await notify_client_about_cancellation(context, appointment)
                 await notify_admin_about_cancellation(context, appointment, user_id, is_admin=True)
+                
+                # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ОТМЕНЫ ЗАПИСИ
+                backup_path = db.create_backup()
+                if backup_path:
+                    logger.info(f"💾 Backup создан после отмены записи #{appointment_id}")
             else:
                 try:
                     await query.edit_message_text("❌ Запись не найдена")
@@ -3572,6 +3609,11 @@ async def cancel_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 else:
                     raise
             await notify_admin_about_cancellation(context, appointment, user_id, is_admin=False)
+            
+            # 🎯 СОЗДАЕМ BACKUP ПОСЛЕ ОТМЕНЫ ЗАПИСИ
+            backup_path = db.create_backup()
+            if backup_path:
+                logger.info(f"💾 Backup создан после отмены записи #{appointment_id}")
         else:
             await query.answer("Запись не найдена или у вас нет прав для её отмены", show_alert=True)
 
@@ -3930,53 +3972,49 @@ async def optimize_database(context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def backup_database(context: ContextTypes.DEFAULT_TYPE):
-    """🎯 УЛУЧШЕННОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ ДЛЯ RENDER"""
+    """🎯 РУЧНОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ (только по команде администратора)"""
     try:
-        import datetime
+        logger.info("💾 Запуск ручного backup по команде администратора...")
         
-        # Получаем статистику для логов
-        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
-        appointments_count = cursor.fetchone()[0]
+        # Создаем backup через database.py
+        backup_path = db.create_backup()
         
-        cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users') 
-        users_count = cursor.fetchone()[0]
-        
-        # 🎯 ПРОВЕРЯЕМ РАЗМЕР БД
-        db_path = get_database_path()
-        if os.path.exists(db_path):
-            size = os.path.getsize(db_path) / (1024 * 1024)  # MB
-            size_info = f"{size:.2f} MB"
+        if backup_path:
+            logger.info(f"✅ Ручной backup создан: {backup_path}")
+            
+            # Уведомляем администратора
+            text = (
+                f"💾 *Ручной backup создан успешно!*\n\n"
+                f"📁 Файл: `{os.path.basename(backup_path)}`\n"
+                f"📏 Размер: {os.path.getsize(backup_path) / 1024:.1f} KB\n"
+                f"⏰ Время: {get_moscow_time().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"*Данные будут автоматически восстановлены при перезапуске*"
+            )
         else:
-            size_info = "файл не найден"
+            logger.warning("⚠️ Ручной backup не создан")
+            text = (
+                f"❌ *Backup не создан*\n\n"
+                f"⚠️ Не удалось создать локальный backup\n\n"
+                f"*Возможные причины:*\n"
+                f"• Ошибка доступа к файлам\n"
+                f"• Недостаточно места в /tmp/\n"
+                f"• Проблемы с базой данных"
+            )
         
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        logger.info(f"💾 ВИРТУАЛЬНЫЙ БЭКАП [{timestamp}]: {appointments_count} записей, {users_count} пользователей, размер: {size_info}")
-        
-        # 🎯 АВТОМАТИЧЕСКАЯ ОЧИСТКА ЕСЛИ БОЛЬШОЙ РАЗМЕР
-        if hasattr(db, 'automatic_cleanup') and size > 8:  # 8MB лимит
-            cleanup_result = db.automatic_cleanup()
-            logger.info(f"🧹 Автоочистка при бэкапе: удалено {cleanup_result['total_deleted']} записей")
-        
-        # Уведомляем администраторов о статистике
-        text = (
-            f"💾 *Статистика БД на {timestamp}:*\n"
-            f"• Записей: {appointments_count}\n"
-            f"• Пользователей: {users_count}\n"
-            f"• Размер БД: {size_info}\n"
-            f"• Render: файловые бэкапы недоступны\n"
-            f"• Данные сохраняются в /tmp/"
-        )
-        
-        notification_chats = db.get_notification_chats()
-        for chat_id in notification_chats:
+        # Отправляем уведомление только тому администратору, который вызвал backup
+        if context.job and 'user_id' in context.job.data:
+            admin_id = context.job.data['user_id']
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=text,
+                    parse_mode='Markdown'
+                )
             except Exception as e:
-                logger.error(f"Ошибка отправки статистики: {e}")
+                logger.error(f"❌ Ошибка отправки уведомления администратору {admin_id}: {e}")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка создания виртуального бэкапа: {e}")
+        logger.error(f"❌ Ошибка при создании ручного backup: {e}")
 
 async def check_database_size(context: ContextTypes.DEFAULT_TYPE):
     """🎯 УЛУЧШЕННАЯ ПРОВЕРКА РАЗМЕРА БД ДЛЯ RENDER"""
@@ -4120,14 +4158,6 @@ def setup_job_queue(application: Application):
         interval=600, 
         first=60, 
         name="prevent_sleep"
-    )
-
-    # 🎯 ЛОКАЛЬНЫЙ BACKUP КАЖДЫЕ 6 ЧАСОВ
-    job_queue.run_repeating(
-        backup_database,
-        interval=21600,  # 6 часов
-        first=300,       # Первый через 5 минут после запуска
-        name="backup_database"
     )
 
     # 🎯 МОНИТОРИНГ ПАМЯТИ КАЖДЫЕ 30 МИНУТ
