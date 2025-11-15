@@ -753,33 +753,47 @@ class Database:
                 SELECT COUNT(*) FROM appointments 
                 WHERE appointment_date = ? AND appointment_time = ?
             ''', (date, time))
-            
+        
             if cursor.fetchone()[0] > 0:
                 raise Exception("Это время уже занято другим клиентом")
-            
+        
+            # 🎯 ДОБАВЛЯЕМ ДИАГНОСТИКУ
+            logger.info(f"🔄 СОЗДАНИЕ ЗАПИСИ: {user_name}, {phone}, {service}, {date} {time}")
+        
             cursor = self.execute_with_retry('''
                 INSERT INTO appointments (user_id, user_name, user_username, phone, service, appointment_date, appointment_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (user_id, user_name, user_username, phone, service, date, time))
-            
+        
             appointment_id = cursor.lastrowid
-            
+            logger.info(f"✅ Запись создана в БД, ID: {appointment_id}")
+        
             self.execute_with_retry('''
                 INSERT OR REPLACE INTO schedule (date, time, available)
                 VALUES (?, ?, ?)
             ''', (date, time, False))
-            
+        
+            # 🎯 ВАЖНО: КОММИТИМ ТРАНЗАКЦИЮ
             self.conn.commit()
-            
+            logger.info("✅ Транзакция закоммичена")
+        
+            # 🎯 ПРОВЕРЯЕМ ЧТО ЗАПИСЬ ДЕЙСТВИТЕЛЬНО СОХРАНИЛАСЬ
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments WHERE id = ?', (appointment_id,))
+            exists = cursor.fetchone()[0] > 0
+            logger.info(f"🔍 ПРОВЕРКА ЗАПИСИ #{appointment_id}: {'✅ Существует' if exists else '❌ Не существует'}")
+        
             # 🎯 АВТОМАТИЧЕСКИЙ BACKUP ПРИ СОЗДАНИИ НОВОЙ ЗАПИСИ
             if self.backup_enabled:
                 logger.info(f"💾 Автоматический backup после создания записи #{appointment_id}")
                 self.create_backup()
 
             return appointment_id
-            
+        
         except Exception as e:
             logger.error(f"❌ Ошибка БД в add_appointment: {e}")
+            # 🎯 ДОБАВЛЯЕМ ОТКАТ ТРАНЗАКЦИИ ПРИ ОШИБКЕ
+            self.conn.rollback()
+            logger.error("❌ Транзакция откатана из-за ошибки")
             raise
 
     def add_or_update_user(self, user_id, username, first_name, last_name):
