@@ -4544,7 +4544,6 @@ def main():
             application.add_handler(CommandHandler("check_backup", check_backup_content))
             application.add_handler(CommandHandler("debug_backup", debug_backup_files))
             logger.info("✅ CommandHandler 'check_backup' added")
-            application.add_handler(CommandHandler("test_restore", test_restore))
             application.add_handler(CommandHandler("check_data", check_real_data))
             logger.info("✅ CommandHandler 'check_data' added")
             
