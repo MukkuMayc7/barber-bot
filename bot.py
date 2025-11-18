@@ -4308,6 +4308,55 @@ async def debug_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(text, parse_mode='Markdown')
 
+async def force_restore_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПРИНУДИТЕЛЬНОЕ ВОССТАНОВЛЕНИЕ ИЗ BACKUP"""
+    user_id = update.effective_user.id
+    
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой команде")
+        return
+    
+    await update.message.reply_text("🔄 Запускаю принудительное восстановление из backup...")
+    
+    # Закрываем текущее соединение
+    if db.conn:
+        try:
+            db.conn.close()
+        except:
+            pass
+        db.conn = None
+    
+    # Выполняем восстановление
+    success = db.restore_from_backup()
+    
+    if success:
+        await update.message.reply_text("✅ Восстановление из backup завершено успешно!")
+        
+        # Показываем восстановленные данные
+        try:
+            cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            appointments_count = cursor.fetchone()[0]
+            cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            users_count = cursor.fetchone()[0]
+            
+            await update.message.reply_text(
+                f"📊 *Восстановленные данные:*\n"
+                f"• Записей: {appointments_count}\n"
+                f"• Пользователей: {users_count}"
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке восстановленных данных: {e}")
+            
+    else:
+        await update.message.reply_text(
+            "❌ Восстановление из backup не удалось.\n\n"
+            "💡 *Возможные причины:*\n"
+            "• Backup файл не существует\n"
+            "• Backup файл пустой\n"
+            "• Ошибка доступа к файлам\n"
+            "• Проверьте логи Render"
+        )
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
@@ -4655,6 +4704,10 @@ def main():
             
             application.add_handler(CommandHandler("debug", debug_bot_status))
             logger.info("✅ CommandHandler 'debug' added")
+
+            # 🎯 ДОБАВЛЯЕМ КОМАНДУ ПРИНУДИТЕЛЬНОГО ВОССТАНОВЛЕНИЯ
+            application.add_handler(CommandHandler("restore", force_restore_backup))
+            logger.info("✅ CommandHandler 'restore' added")
             
             # 🎯 ОБРАБОТЧИКИ СООБЩЕНИЙ
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
