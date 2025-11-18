@@ -78,13 +78,14 @@ async def check_memory_usage(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Ошибка мониторинга памяти: {e}")
 
 async def show_backup_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🎯 ПОКАЗЫВАЕТ СТАТУС BACKUP ДЛЯ АДМИНИСТРАТОРОВ"""
+    """🎯 ПОКАЗЫВАЕТ СТАТУС BACKUP БЕЗ ВОССТАНОВЛЕНИЯ"""
     user_id = update.effective_user.id
     
     if not db.is_admin(user_id):
         await update.message.reply_text("❌ У вас нет доступа к этой функции")
         return
     
+    # 🎯 ТОЛЬКО ПОКАЗЫВАЕМ СТАТУС, НЕ ВОССТАНАВЛИВАЕМ!
     backup_status = db.get_backup_status()
     backup_files = db.get_backup_files_info()
     
@@ -95,7 +96,7 @@ async def show_backup_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if backup_files:
             text += f"📁 *Backup файлов:* {len(backup_files)}\n\n"
-            for i, file_info in enumerate(backup_files[:3], 1):  # Показываем последние 3
+            for i, file_info in enumerate(backup_files[:3], 1):
                 text += f"{i}. 📄 `{os.path.basename(file_info['path'])}`\n"
                 text += f"   📏 {file_info['size_kb']} KB | 🕐 {file_info['date']}\n\n"
         
@@ -125,24 +126,28 @@ async def show_backup_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         db_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
         size_info = f"{db_size:.2f} MB"
         
-        # 🎯 ДОБАВЛЯЕМ ДИАГНОСТИКУ
-        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
-        appointments_count = cursor.fetchone()[0]
-        cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
-        users_count = cursor.fetchone()[0]
-        
-        text += f"💾 *Текущая БД:* {size_info} ({appointments_count} записей, {users_count} пользователей)\n"
+        # Получаем текущие данные из БД
+        try:
+            cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            appointments_count = cursor.fetchone()[0]
+            cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            users_count = cursor.fetchone()[0]
+            
+            text += f"💾 *Текущая БД:* {size_info} ({appointments_count} записей, {users_count} пользователей)\n"
+        except Exception as e:
+            text += f"💾 *Текущая БД:* {size_info} (ошибка получения данных)\n"
     else:
         size_info = "не найден"
         text += f"💾 *Текущая БД:* {size_info}\n"
     
     text += f"🔄 *Автовосстановление:* ✅ Включено\n"
-    text += f"⏰ *Следующий backup:* при следующем изменении\n"  # Изменено с "через 6 часов"
+    text += f"⏰ *Следующий backup:* при следующем изменении\n"
     text += f"📝 *Тип:* Локальные файлы (/tmp/)"
     
     keyboard = [
         [InlineKeyboardButton("🔄 Создать backup сейчас", callback_data="create_backup_now")],
         [InlineKeyboardButton("📊 Статистика БД", callback_data="db_stats")],
+        [InlineKeyboardButton("🔄 Восстановить из backup", callback_data="confirm_restore")],  # 🎯 ОТДЕЛЬНАЯ КНОПКА
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -3462,6 +3467,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await create_backup_now(update, context)
     elif query.data == "db_stats":
         await show_db_stats(update, context)
+    # 🎯 ДОБАВЛЯЕМ НОВЫЕ ОБРАБОТЧИКИ ВОССТАНОВЛЕНИЯ
+    elif query.data == "confirm_restore":
+        await confirm_restore_backup(update, context)
+    elif query.data == "execute_restore":
+        await execute_restore_backup(update, context)
     
     # ОСНОВНЫЕ ОБРАБОТЧИКИ
     elif query.data == "main_menu":
@@ -4356,6 +4366,96 @@ async def force_restore_backup(update: Update, context: ContextTypes.DEFAULT_TYP
             "• Ошибка доступа к файлам\n"
             "• Проверьте логи Render"
         )
+        
+async def confirm_restore_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ПОДТВЕРЖДЕНИЕ ВОССТАНОВЛЕНИЯ ИЗ BACKUP"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    # Показываем предупреждение
+    text = (
+        "⚠️ *ВНИМАНИЕ: Восстановление из backup*\n\n"
+        "Вы собираетесь восстановить данные из backup файла.\n\n"
+        "❗ *Это действие:*\n"
+        "• Перезапишет текущую базу данных\n"
+        "• Может привести к потере новых записей\n"
+        "• Требует перезапуска некоторых функций\n\n"
+        "✅ *Рекомендуется:*\n"
+        "• Создать backup текущего состояния\n"
+        "• Выполнять только при проблемах с данными\n\n"
+        "Вы уверены что хотите продолжить?"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, восстановить", callback_data="execute_restore")],
+        [InlineKeyboardButton("❌ Нет, отмена", callback_data="backup_status")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def execute_restore_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ВЫПОЛНЕНИЕ ВОССТАНОВЛЕНИЯ ИЗ BACKUP"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if not db.is_admin(user_id):
+        await query.answer("❌ У вас нет доступа к этой функции", show_alert=True)
+        return
+    
+    await query.edit_message_text("🔄 Выполняю восстановление из backup...")
+    
+    # Закрываем текущее соединение
+    if db.conn:
+        try:
+            db.conn.close()
+        except:
+            pass
+        db.conn = None
+    
+    # Выполняем восстановление
+    success = db.restore_from_backup()
+    
+    if success:
+        # Переподключаемся к БД
+        db.reconnect()
+        
+        # Показываем восстановленные данные
+        try:
+            cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            appointments_count = cursor.fetchone()[0]
+            cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            users_count = cursor.fetchone()[0]
+            
+            text = (
+                f"✅ *Восстановление завершено успешно!*\n\n"
+                f"📊 *Восстановленные данные:*\n"
+                f"• Записей: {appointments_count}\n"
+                f"• Пользователей: {users_count}\n\n"
+                f"💡 *Рекомендация:*\n"
+                f"• Проверьте данные командой /check_data\n"
+                f"• При необходимости создайте новый backup"
+            )
+        except Exception as e:
+            text = f"✅ Восстановление завершено, но не удалось проверить данные: {e}"
+    else:
+        text = (
+            "❌ *Восстановление не удалось*\n\n"
+            "💡 *Возможные причины:*\n"
+            "• Backup файл не существует\n" 
+            "• Backup файл пустой или поврежден\n"
+            "• Ошибка доступа к файлам\n\n"
+            "Проверьте логи для подробной информации"
+        )
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад к backup", callback_data="backup_status")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
