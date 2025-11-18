@@ -4431,12 +4431,13 @@ async def execute_restore_backup(update: Update, context: ContextTypes.DEFAULT_T
             cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users')
             users_count = cursor.fetchone()[0]
             
+            # 🎯 ИСПРАВЛЕНИЕ: Убираем проблемные символы Markdown
             text = (
                 f"✅ *Восстановление завершено успешно!*\n\n"
                 f"📊 *Восстановленные данные:*\n"
                 f"• Записей: {appointments_count}\n"
                 f"• Пользователей: {users_count}\n\n"
-                f"💡 *Рекомендация:*\n"
+                f"💡 Рекомендация:\n"
                 f"• Проверьте данные командой /check_data\n"
                 f"• При необходимости создайте новый backup"
             )
@@ -4444,8 +4445,8 @@ async def execute_restore_backup(update: Update, context: ContextTypes.DEFAULT_T
             text = f"✅ Восстановление завершено, но не удалось проверить данные: {e}"
     else:
         text = (
-            "❌ *Восстановление не удалось*\n\n"
-            "💡 *Возможные причины:*\n"
+            "❌ Восстановление не удалось\n\n"
+            "💡 Возможные причины:\n"
             "• Backup файл не существует\n" 
             "• Backup файл пустой или поврежден\n"
             "• Ошибка доступа к файлам\n\n"
@@ -4455,7 +4456,12 @@ async def execute_restore_backup(update: Update, context: ContextTypes.DEFAULT_T
     keyboard = [[InlineKeyboardButton("🔙 Назад к backup", callback_data="backup_status")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    # 🎯 ИСПРАВЛЕНИЕ: Убираем parse_mode если есть проблемы с форматированием
+    try:
+        await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    except BadRequest:
+        # Если ошибка форматирования, отправляем без Markdown
+        await query.edit_message_text(text, reply_markup=reply_markup)
 
 def setup_job_queue(application: Application):
     job_queue = application.job_queue

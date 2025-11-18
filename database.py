@@ -64,44 +64,49 @@ class Database:
                         self.conn.close()
                     except:
                         pass
-            
+                
                 logger.info(f"📁 Подключаемся к БД по пути: {self.db_path}")
-            
+                
                 # 🎯 ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ФАЙЛА БД
                 db_file_exists = os.path.exists(self.db_path)
                 logger.info(f"🔍 Файл БД существует: {db_file_exists}")
-            
+                
                 if db_file_exists:
                     # Проверяем размер файла
                     file_size = os.path.getsize(self.db_path) if db_file_exists else 0
                     logger.info(f"📏 Размер файла БД: {file_size} bytes")
-            
+                
                 self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
                 self.conn.row_factory = sqlite3.Row
-             
+                
                 # Оптимизации для SQLite
                 self.conn.execute('PRAGMA journal_mode=WAL')
                 self.conn.execute('PRAGMA synchronous=NORMAL')
                 self.conn.execute('PRAGMA cache_size=-64000')
                 self.conn.execute('PRAGMA foreign_keys=ON')
                 self.conn.execute('PRAGMA auto_vacuum=INCREMENTAL')
-            
+                
                 self.create_tables()
                 self.update_database_structure()
                 self.create_admin_tables()
                 self.setup_default_notifications()
                 self.setup_default_schedule()
-            
+                
                 # 🎯 УЛУЧШЕННОЕ ВОССТАНОВЛЕНИЕ ИЗ BACKUP
                 backup_path = "/tmp/barbershop_latest_backup.db"
                 backup_exists = os.path.exists(backup_path)
-            
+                
                 logger.info(f"🔍 Backup файл существует: {backup_exists}")
+                backup_size = 0
                 if backup_exists:
                     backup_size = os.path.getsize(backup_path)
                     logger.info(f"📏 Размер backup: {backup_size} bytes")
-            
-                if not self.has_data() and self.backup_enabled and backup_exists:
+                
+                # 🎯 ИСПРАВЛЕНИЕ: Проверяем что это действительно первый запуск
+                current_data_exists = self.has_data()
+                logger.info(f"🔍 Текущая БД содержит данные: {current_data_exists}")
+                
+                if not current_data_exists and self.backup_enabled and backup_exists and backup_size > 0:
                     logger.info("🔄 Обнаружена пустая БД при существующем backup - запускаем восстановление...")
                     if self.restore_from_backup():
                         logger.info("✅ Восстановление из backup завершено успешно")
@@ -109,10 +114,10 @@ class Database:
                         logger.error("❌ Восстановление из backup не удалось")
                 else:
                     logger.info("⏩ Восстановление не требуется")
-            
+                
                 logger.info("✅ Успешное подключение к SQLite")
                 return
-            
+                
             except sqlite3.OperationalError as e:
                 if "locked" in str(e) and attempt < self.max_retries - 1:
                     logger.warning(f"⚠️ База данных заблокирована, попытка {attempt + 1}/{self.max_retries}")
@@ -445,8 +450,42 @@ class Database:
         
             # 🎯 ПРОВЕРЯЕМ РАЗМЕР BACKUP ФАЙЛА
             backup_size = os.path.getsize(backup_path)
+            logger.info(f"🔍 Размер backup файла: {backup_size} bytes")
+        
             if backup_size == 0:
                 logger.info("⏩ Backup файл пустой - восстановление не требуется")
+                return False
+        
+            # 🎯 ПРОВЕРЯЕМ СОДЕРЖИМОЕ BACKUP ФАЙЛА
+            try:
+                import sqlite3
+                test_conn = sqlite3.connect(backup_path)
+                cursor = test_conn.cursor()
+            
+                # Проверяем таблицы в backup
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='appointments'")
+                if not cursor.fetchone():
+                    logger.error("❌ Backup файл не содержит таблицу appointments")
+                    test_conn.close()
+                    return False
+                
+                # Проверяем данные в backup
+                cursor.execute('SELECT COUNT(*) FROM appointments')
+                backup_appointments = cursor.fetchone()[0]
+            
+                cursor.execute('SELECT COUNT(*) FROM bot_users')
+                backup_users = cursor.fetchone()[0]
+            
+                test_conn.close()
+            
+                logger.info(f"🔍 Данные в backup: {backup_appointments} записей, {backup_users} пользователей")
+            
+                if backup_appointments == 0:
+                    logger.info("⏩ Backup файл пустой (нет записей) - восстановление не требуется")
+                    return False
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка проверки backup файла: {e}")
                 return False
             
             logger.info(f"🔄 Восстанавливаем из backup: {backup_path} ({backup_size} bytes)")
@@ -457,7 +496,7 @@ class Database:
                     self.conn.close()
                 except:
                     pass
-                self.conn = None  # 🎯 ВАЖНО: обнуляем соединение
+                self.conn = None
         
             # 🎯 УДАЛЯЕМ СТАРУЮ БД ЕСЛИ СУЩЕСТВУЕТ
             try:
@@ -466,6 +505,7 @@ class Database:
                     logger.info("✅ Старая БД удалена")
             except Exception as e:
                 logger.error(f"❌ Ошибка удаления старой БД: {e}")
+                return False
         
             # Копируем backup
             import shutil
