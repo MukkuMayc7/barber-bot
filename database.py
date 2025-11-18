@@ -410,80 +410,66 @@ class Database:
             return None
 
     def restore_from_backup(self):
-        """🎯 ВОССТАНОВЛЕНИЕ ИЗ ЛОКАЛЬНОГО BACKUP"""
         try:
             if not self.backup_enabled:
-                logger.info("⏩ Восстановление отключено")
                 return False
-        
+    
             backup_path = "/tmp/barbershop_latest_backup.db"
-        
+    
             if not os.path.exists(backup_path):
                 logger.info("⏩ Нет backup файла для восстановления")
                 return False
-        
+    
             # 🎯 ПРОВЕРЯЕМ ЧТО В БЭКАПЕ ЕСТЬ ДАННЫЕ
             import sqlite3
             conn_check = sqlite3.connect(backup_path)
             cursor_check = conn_check.cursor()
-        
+    
             try:
                 cursor_check.execute('SELECT COUNT(*) FROM appointments')
                 backup_appointments = cursor_check.fetchone()[0]
-            
                 cursor_check.execute('SELECT COUNT(*) FROM bot_users')
                 backup_users = cursor_check.fetchone()[0]
-            except:
+            except Exception as e:
+                logger.error(f"❌ Ошибка проверки backup: {e}")
                 backup_appointments = 0
                 backup_users = 0
-        
-            conn_check.close()
-        
+            finally:
+                conn_check.close()
+    
             if backup_appointments == 0 and backup_users == 0:
                 logger.info("⏩ Бэкап файл пустой, восстановление не требуется")
                 return False
-        
-            logger.info(f"🔄 Восстанавливаем из backup: {backup_path} (записей: {backup_appointments}, пользователей: {backup_users})")
-        
-            # 🎯 ЗАКРЫВАЕМ СОЕДИНЕНИЕ ПРАВИЛЬНО
+    
+            logger.info(f"🔄 Восстанавливаем из backup: {backup_path}")
+    
+            # 🎯 АККУРАТНО ЗАКРЫВАЕМ СОЕДИНЕНИЕ
             if self.conn:
                 try:
                     self.conn.close()
                 except:
                     pass
-        
-            # 🎯 УДАЛЯЕМ СТАРУЮ БД И КОПИРУЕМ БЭКАП
-            try:
-                if os.path.exists(self.db_path):
-                    os.remove(self.db_path)
-                    logger.info("✅ Старая БД удалена")
-            except Exception as e:
-                logger.error(f"❌ Ошибка удаления старой БД: {e}")
-        
-            # Копируем backup
+                self.conn = None  # 🎯 ВАЖНО: обнуляем соединение
+    
+            # Копируем backup поверх основной БД
             import shutil
             shutil.copy2(backup_path, self.db_path)
             logger.info("✅ Бэкап скопирован")
+    
+            # 🎯 ПЕРЕСОЗДАЕМ СОЕДИНЕНИЕ
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
+            self.conn.row_factory = sqlite3.Row
+            self.create_tables()  # 🎯 ВАЖНО: пересоздаем таблицы если нужно
         
-            # 🎯 ПЕРЕПОДКЛЮЧАЕМСЯ И ПРОВЕРЯЕМ
-            self.reconnect()
-        
-            # Проверяем что данные восстановились
-            cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
-            restored_appointments = cursor.fetchone()[0]
-        
-            cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
-            restored_users = cursor.fetchone()[0]
-        
-            logger.info(f"✅ Восстановление завершено! Записей: {restored_appointments}, пользователей: {restored_users}")
-        
+            logger.info("✅ Восстановление завершено!")
             return True
-        
+    
         except Exception as e:
             logger.error(f"❌ Ошибка при восстановлении из backup: {e}")
-            # Пытаемся переподключиться к оригинальной БД
+            # Пытаемся восстановить оригинальное соединение
             try:
-                self.reconnect()
+                self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
+                self.conn.row_factory = sqlite3.Row
             except:
                 pass
             return False

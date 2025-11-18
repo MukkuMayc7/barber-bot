@@ -4254,6 +4254,60 @@ async def check_real_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Ошибка проверки данных: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+async def debug_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Диагностика статуса бота"""
+    user_id = update.effective_user.id
+    if not db.is_admin(user_id):
+        await update.message.reply_text("❌ У вас нет доступа к этой команде")
+        return
+        
+    text = "🔧 *ДИАГНОСТИКА БОТА:*\n\n"
+    
+    # Проверка БД
+    try:
+        cursor = db.execute_with_retry('SELECT 1')
+        text += "✅ База данных: Активна\n"
+        
+        # Статистика БД
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+        appointments_count = cursor.fetchone()[0]
+        cursor = db.execute_with_retry('SELECT COUNT(*) FROM bot_users') 
+        users_count = cursor.fetchone()[0]
+        
+        text += f"📊 Записей в БД: {appointments_count}\n"
+        text += f"👥 Пользователей: {users_count}\n"
+    except Exception as e:
+        text += f"❌ База данных: Ошибка - {e}\n"
+    
+    # Проверка файлов
+    db_path = '/tmp/barbershop.db'
+    backup_path = '/tmp/barbershop_latest_backup.db'
+    
+    text += f"\n📁 *Файлы:*\n"
+    text += f"• Основная БД: {'✅ Существует' if os.path.exists(db_path) else '❌ Отсутствует'}\n"
+    if os.path.exists(db_path):
+        size = os.path.getsize(db_path)
+        text += f"  Размер: {size} bytes ({size/1024/1024:.2f} MB)\n"
+    
+    text += f"• Backup БД: {'✅ Существует' if os.path.exists(backup_path) else '❌ Отсутствует'}\n"
+    if os.path.exists(backup_path):
+        size = os.path.getsize(backup_path)
+        text += f"  Размер: {size} bytes ({size/1024/1024:.2f} MB)\n"
+    
+    # Статус backup
+    backup_files = db.get_backup_files_info()
+    text += f"\n💾 Backup файлов: {len(backup_files)}\n"
+    
+    # Время работы
+    if context.application.bot_data.get('start_time'):
+        start_time = datetime.fromisoformat(context.application.bot_data['start_time'])
+        uptime = get_moscow_time() - start_time
+        text += f"\n⏰ Время работы: {uptime}\n"
+    
+    text += f"\n🔄 Перезапусков: {context.application.bot_data.get('restart_count', 0)}"
+    
+    await update.message.reply_text(text, parse_mode='Markdown')
+
 def setup_job_queue(application: Application):
     job_queue = application.job_queue
 
@@ -4428,90 +4482,139 @@ def main():
     
     logger.info("🚀 Starting Barbershop Bot with enhanced 24/7 support and CONFLICT PROTECTION...")
     
+    # 🎯 ЖЕСТКАЯ ОЧИСТКА WEBHOOK ПЕРЕД ЗАПУСКОМ (5 попыток)
+    logger.info("🔄 Выполняем тщательную очистку webhook...")
+    for i in range(5):
+        try:
+            import requests
+            bot_token = config.BOT_TOKEN
+            
+            # 1. Удаляем webhook
+            response = requests.post(
+                f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
+                json={"drop_pending_updates": True},
+                timeout=10
+            )
+            logger.info(f"✅ Webhook deletion attempt {i+1}: {response.status_code}")
+            
+            # 2. Проверяем что webhook удален
+            response = requests.get(f"https://api.telegram.org/bot{bot_token}/getWebhookInfo", timeout=10)
+            if response.status_code == 200:
+                webhook_info = response.json()
+                if not webhook_info['result']['url']:
+                    logger.info("✅ Webhook полностью очищен")
+                    break
+                else:
+                    logger.warning(f"⚠️ Webhook все еще установлен: {webhook_info['result']['url']}")
+            
+            # 3. Дополнительная очистка через getUpdates
+            response = requests.post(
+                f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                json={"offset": -1, "limit": 1},
+                timeout=10
+            )
+            logger.info(f"✅ Updates reset attempt {i+1}")
+            
+            time.sleep(2)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Webhook cleanup attempt {i+1} failed: {e}")
+            time.sleep(3)
+    
+    # 🎯 ПРОВЕРЯЕМ ВАЛИДНОСТЬ ТОКЕНА БОТА
+    logger.info("🔐 Проверяем валидность токена бота...")
     try:
         import requests
         bot_token = config.BOT_TOKEN
-        for i in range(3):
-            try:
-                response = requests.post(
-                    f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
-                    timeout=10
-                )
-                logger.info(f"✅ Webhook deletion attempt {i+1}: {response.status_code}")
-                
-                response = requests.post(
-                    f"https://api.telegram.org/bot{bot_token}/getUpdates",
-                    json={"offset": -1, "limit": 1},
-                    timeout=10
-                )
-                logger.info(f"✅ Updates reset attempt {i+1}")
-                time.sleep(2)
-            except Exception as e:
-                logger.warning(f"⚠️ Webhook cleanup attempt {i+1} failed: {e}")
-                
+        response = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=15)
+        if response.status_code == 200:
+            bot_info = response.json()
+            logger.info(f"✅ Bot info: {bot_info['result']['username']} (ID: {bot_info['result']['id']})")
+        else:
+            logger.error(f"❌ Bot token validation failed: {response.status_code} - {response.text}")
+            logger.error("🚨 ПРОВЕРЬТЕ BOT_TOKEN В НАСТРОЙКАХ RENDER!")
+            sys.exit(1)
     except Exception as e:
-        logger.warning(f"⚠️ Webhook cleanup warning: {e}")
+        logger.error(f"❌ Bot token validation failed: {e}")
+        logger.error("🚨 ПРОВЕРЬТЕ BOT_TOKEN И INTERNET ДОСТУП В RENDER!")
+        sys.exit(1)
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # 🎯 ЗАПУСКАЕМ ВЕБ-СЕРВЕР В ОТДЕЛЬНОМ ПОТОКЕ
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     logger.info("🌐 Web server thread started")
 
+    # 🎯 ЗАПУСКАЕМ СИСТЕМУ SELF-PING
     start_enhanced_self_ping()
     logger.info("🔁 Enhanced self-ping service started")
 
+    # 🎯 ЖДЕМ ЗАПУСКА ВЕБ-СЕРВЕРА
     time.sleep(3)
     
+    # 🎯 ПРОВЕРЯЕМ РАБОТОСПОСОБНОСТЬ ВЕБ-СЕРВЕРА
     try:
         port = int(os.getenv('PORT', 10000))
         import requests
         health_url = f"http://localhost:{port}/healthcheck"
-        response = requests.get(health_url, timeout=5)
+        response = requests.get(health_url, timeout=10)
         if response.status_code == 200:
             logger.info(f"✅ Web server confirmed running on port {port}")
         else:
             logger.warning(f"⚠️ Web server responded with status: {response.status_code}")
     except Exception as e:
         logger.error(f"❌ Web server health check failed: {e}")
+        logger.info("🔄 Пытаемся продолжить без веб-сервера...")
     
+    # 🎯 ОСНОВНОЙ ЦИКЛ ПЕРЕЗАПУСКА БОТА
     restart_count = 0
-    max_restarts = 10
+    max_restarts = 15  # Увеличили лимит перезапусков
+    last_restart_time = time.time()
     
     while restart_count < max_restarts:
         try:
             restart_count += 1
+            current_time = time.time()
+            
+            # 🎯 ПРОВЕРЯЕМ ЧАСТОТУ ПЕРЕЗАПУСКОВ
+            if restart_count > 1:
+                time_since_last_restart = current_time - last_restart_time
+                if time_since_last_restart < 30:  # Чаще чем раз в 30 секунд
+                    wait_time = 60  # Ждем минуту
+                    logger.warning(f"🚨 СЛИШКОМ ЧАСТЫЕ ПЕРЕЗАПУСКИ! Ждем {wait_time} секунд...")
+                    time.sleep(wait_time)
+            
+            last_restart_time = current_time
             logger.info(f"🤖 Initializing bot application (restart #{restart_count})...")
             
-            try:
-                import requests
-                bot_token = config.BOT_TOKEN
-                response = requests.post(
-                    f"https://api.telegram.org/bot{bot_token}/deleteWebhook", 
-                    json={"drop_pending_updates": True},
-                    timeout=10
-                )
-                logger.info(f"✅ Final webhook cleanup: {response.status_code}")
-                time.sleep(3)
-            except Exception as e:
-                logger.warning(f"⚠️ Final webhook cleanup failed: {e}")
-            
+            # 🎯 ПЕРЕПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ
             global db
             try:
                 db = database.Database()
                 logger.info("✅ Database connection reestablished")
+                
+                # 🎯 ПРОВЕРЯЕМ ЧТО БАЗА РАБОТАЕТ
+                cursor = db.execute_with_retry('SELECT COUNT(*) FROM appointments')
+                appointments_count = cursor.fetchone()[0]
+                logger.info(f"📊 В базе данных: {appointments_count} записей")
+                
             except Exception as e:
                 logger.error(f"❌ Database connection failed: {e}")
+                logger.info("🔄 Пытаемся переподключиться через 10 секунд...")
                 time.sleep(10)
                 continue
             
+            # 🎯 СОЗДАЕМ ПРИЛОЖЕНИЕ БОТА
             application = Application.builder().token(config.BOT_TOKEN).build()
             logger.info("✅ Application created")
             
+            # 🎯 ДОБАВЛЯЕМ ОБРАБОТЧИКИ
             application.add_error_handler(error_handler)
             logger.info("✅ Error handler added")
             
+            # 🎯 CONVERSATION HANDLER ДЛЯ ЗАПИСИ
             conv_handler = ConversationHandler(
                 entry_points=[
                     CallbackQueryHandler(time_selected, pattern="^time_"),
@@ -4531,12 +4634,14 @@ def main():
             application.add_handler(conv_handler)
             logger.info("✅ ConversationHandler added")
             
+            # 🎯 ОСНОВНЫЕ КОМАНДЫ
             application.add_handler(CommandHandler("start", start))
             logger.info("✅ CommandHandler 'start' added")
             
             application.add_handler(CommandHandler("stop", stop_command))
             logger.info("✅ CommandHandler 'stop' added")
 
+            # 🎯 BACKUP КОМАНДЫ
             application.add_handler(CommandHandler("backup", backup_info))
             application.add_handler(CommandHandler("backup_info", backup_info))
             logger.info("✅ CommandHandler 'backup' and 'backup_info' added")
@@ -4544,54 +4649,92 @@ def main():
             application.add_handler(CommandHandler("check_backup", check_backup_content))
             application.add_handler(CommandHandler("debug_backup", debug_backup_files))
             logger.info("✅ CommandHandler 'check_backup' added")
+            
             application.add_handler(CommandHandler("check_data", check_real_data))
             logger.info("✅ CommandHandler 'check_data' added")
             
+            application.add_handler(CommandHandler("debug", debug_bot_status))
+            logger.info("✅ CommandHandler 'debug' added")
+            
+            # 🎯 ОБРАБОТЧИКИ СООБЩЕНИЙ
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             logger.info("✅ MessageHandler for text added")
             
             application.add_handler(CallbackQueryHandler(button_handler))
             logger.info("✅ CallbackQueryHandler added")
             
+            # 🎯 НАСТРОЙКА JOB QUEUE
             try:
                 setup_job_queue(application)
                 logger.info("✅ Job queue setup completed")
             except Exception as e:
                 logger.error(f"❌ Job queue setup failed: {e}")
+                # Продолжаем без job queue
             
-            logger.info("🤖 Bot starting in polling mode with Render optimization...")
+            # 🎯 ФИНАЛЬНАЯ ПРОВЕРКА ПЕРЕД ЗАПУСКОМ
+            logger.info("🔍 Выполняем финальные проверки...")
             
+            # Проверяем что бот доступен через API
             try:
                 import requests
-                bot_token = config.BOT_TOKEN
-                response = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10)
-                if response.status_code == 200:
-                    bot_info = response.json()
-                    logger.info(f"✅ Bot info: {bot_info['result']['username']} (ID: {bot_info['result']['id']})")
-                else:
-                    logger.error(f"❌ Bot token validation failed: {response.status_code}")
-                    time.sleep(10)
-                    continue
+                response = requests.get(f"https://api.telegram.org/bot{config.BOT_TOKEN}/getMe", timeout=10)
+                if response.status_code != 200:
+                    logger.error(f"❌ Bot недоступен через API: {response.status_code}")
+                    raise Exception("Bot API недоступен")
             except Exception as e:
-                logger.error(f"❌ Bot token validation failed: {e}")
+                logger.error(f"❌ Финальная проверка бота провалилась: {e}")
                 time.sleep(10)
                 continue
             
+            # 🎯 ЗАПУСКАЕМ БОТА В POLLING РЕЖИМЕ
+            logger.info("🤖 Bot starting in polling mode with Render optimization...")
+            
+            # 🎯 УСТАНАВЛИВАЕМ ФЛАГ АКТИВНОСТИ
+            application.bot_data['bot_active'] = True
+            application.bot_data['start_time'] = get_moscow_time().isoformat()
+            
+            # 🎯 ЗАПУСК POLLING С ЗАЩИТОЙ ОТ КОНФЛИКТОВ
             application.run_polling(
-                poll_interval=3.0,
-                timeout=20,
-                drop_pending_updates=True,
-                allowed_updates=['message', 'callback_query'],
-                close_loop=False
+                poll_interval=2.0,           # Уменьшили интервал опроса
+                timeout=25,                  # Увеличили таймаут
+                drop_pending_updates=True,   # Удаляем ожидающие обновления
+                allowed_updates=['message', 'callback_query', 'chat_member'],
+                close_loop=False,
+                stop_signals=[]              # Отключаем обработку сигналов для Render
             )
             
-            logger.info("🤖 Bot stopped normally - restarting...")
-            restart_count = 0
+            logger.info("🤖 Bot stopped normally - preparing for restart...")
+            
+            # 🎯 АККУРАТНАЯ ОСТАНОВКА ПЕРЕЕД ПЕРЕЗАПУСКОМ
+            try:
+                if application.running:
+                    application.stop()
+                    application.shutdown()
+                logger.info("✅ Application stopped gracefully")
+            except Exception as e:
+                logger.warning(f"⚠️ Graceful shutdown failed: {e}")
+            
+            # 🎯 ОЧИСТКА РЕСУРСОВ
+            try:
+                if db.conn:
+                    db.conn.close()
+                    db.conn = None
+                logger.info("✅ Database connection closed")
+            except Exception as e:
+                logger.warning(f"⚠️ Database close failed: {e}")
+            
+            # 🎯 СБРАСЫВАЕМ СЧЕТЧИК ПЕРЕЗАПУСКОВ ПРИ УСПЕШНОЙ РАБОТЕ
+            if restart_count > 5:
+                logger.info("🔄 Сбрасываем счетчик перезапусков после стабильной работы")
+                restart_count = 0
+                
+            # 🎯 КОРОТКАЯ ПАУЗА ПЕРЕД ПЕРЕЗАПУСКОМ
+            time.sleep(5)
             
         except Conflict as e:
             logger.warning(f"⚠️ CONFLICT DETECTED: {e}")
-            logger.info("🔄 Waiting 5 seconds before retry...")
-            time.sleep(5)
+            logger.info("🔄 Waiting 10 seconds before retry...")
+            time.sleep(10)
             
         except Exception as e:
             logger.error(f"❌ Bot crashed with error: {e}")
@@ -4599,14 +4742,17 @@ def main():
             import traceback
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
             
-            wait_time = min(5 * restart_count, 30)
+            # 🎯 АДАПТИВНОЕ ВРЕМЯ ОЖИДАНИЯ
+            wait_time = min(10 * restart_count, 60)  # Максимум 60 секунд
             logger.info(f"🔄 Restarting bot in {wait_time} seconds... (restart #{restart_count})")
             time.sleep(wait_time)
             
+            # 🎯 ОЧИСТКА ПАМЯТИ
             import gc
             gc.collect()
 
     logger.error(f"❌ Maximum restart attempts ({max_restarts}) reached. Exiting.")
+    logger.info("💡 Рекомендация: Проверьте настройки BOT_TOKEN и доступ к интернету в Render")
 
 if __name__ == "__main__":
     main()
