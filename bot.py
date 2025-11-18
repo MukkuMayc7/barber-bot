@@ -67,6 +67,9 @@ async def check_memory_usage(context: ContextTypes.DEFAULT_TYPE):
             if backup_path:
                 logger.info(f"✅ Backup перед очисткой создан: {backup_path}")
             
+            # Выполняем экстренную очистку
+            deleted_count = db.emergency_cleanup()
+            
             logger.info(f"🚨 Экстренная очистка: удалено {deleted_count} записей")
             
             # 🎯 УБИРАЕМ УВЕДОМЛЕНИЯ АДМИНИСТРАТОРАМ
@@ -1525,9 +1528,9 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
         # Пропускаем напоминания для ручных записей администратора
         if user_name == "Администратор":
             logger.info(f"⏩ Пропуск 24h напоминания для записи администратора #{appointment_id}")
-            # 🎯 УДАЛЯЕМ ЗАПИСЬ О НАПОМИНАНИИ ДАЖЕ ДЛЯ АДМИНИСТРАТОРОВ
             cursor = db.execute_with_retry('''
-                DELETE FROM scheduled_reminders 
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
                 WHERE appointment_id = ? AND reminder_type = '24h'
             ''', (appointment_id,))
             db.conn.commit()
@@ -1551,21 +1554,21 @@ async def send_single_24h_reminder(context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
         
-        # 🎯 УДАЛЯЕМ ЗАПИСЬ О НАПОМИНАНИИ ПОСЛЕ УСПЕШНОЙ ОТПРАВКИ
         cursor = db.execute_with_retry('''
-            DELETE FROM scheduled_reminders 
+            UPDATE scheduled_reminders 
+            SET sent = TRUE 
             WHERE appointment_id = ? AND reminder_type = '24h'
         ''', (appointment_id,))
         db.conn.commit()
         
-        logger.info(f"✅ 24h напоминание отправлено пользователю {user_id} для записи #{appointment_id} и удалено из БД")
+        logger.info(f"✅ 24h напоминание отправлено пользователю {user_id} для записи #{appointment_id}")
         
     except BadRequest as e:
         if "chat not found" in str(e).lower():
             logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 24h reminder")
-            # 🎯 УДАЛЯЕМ ЗАПИСЬ ДАЖЕ ПРИ ОШИБКЕ ОТПРАВКИ
             cursor = db.execute_with_retry('''
-                DELETE FROM scheduled_reminders 
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
                 WHERE appointment_id = ? AND reminder_type = '24h'
             ''', (appointment_id,))
             db.conn.commit()
@@ -1603,9 +1606,9 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         # Пропускаем напоминания для ручных записей администратора
         if user_name == "Администратор":
             logger.info(f"⏩ Пропуск 1h напоминания для записи администратора #{appointment_id}")
-            # 🎯 УДАЛЯЕМ ЗАПИСЬ О НАПОМИНАНИИ ДАЖЕ ДЛЯ АДМИНИСТРАТОРОВ
             cursor = db.execute_with_retry('''
-                DELETE FROM scheduled_reminders 
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
                 WHERE appointment_id = ? AND reminder_type = '1h'
             ''', (appointment_id,))
             db.conn.commit()
@@ -1629,21 +1632,21 @@ async def send_single_1h_reminder(context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
         
-        # 🎯 УДАЛЯЕМ ЗАПИСЬ О НАПОМИНАНИИ ПОСЛЕ УСПЕШНОЙ ОТПРАВКИ
         cursor = db.execute_with_retry('''
-            DELETE FROM scheduled_reminders 
+            UPDATE scheduled_reminders 
+            SET sent = TRUE 
             WHERE appointment_id = ? AND reminder_type = '1h'
         ''', (appointment_id,))
         db.conn.commit()
         
-        logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} для записи #{appointment_id} и удалено из БД")
+        logger.info(f"✅ 1h напоминание отправлено пользователю {user_id} для записи #{appointment_id}")
         
     except BadRequest as e:
         if "chat not found" in str(e).lower():
             logger.warning(f"⚠️ Chat not found for user {user_id}, skipping 1h reminder")
-            # 🎯 УДАЛЯЕМ ЗАПИСЬ ДАЖЕ ПРИ ОШИБКЕ ОТПРАВКИ
             cursor = db.execute_with_retry('''
-                DELETE FROM scheduled_reminders 
+                UPDATE scheduled_reminders 
+                SET sent = TRUE 
                 WHERE appointment_id = ? AND reminder_type = '1h'
             ''', (appointment_id,))
             db.conn.commit()
@@ -3934,6 +3937,23 @@ async def cleanup_duplicate_reminders(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Ошибка при очистке дублирующихся напоминаний: {e}")
 
+async def cleanup_old_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые отправленные напоминания"""
+    try:
+        seven_days_ago = (get_moscow_time() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor = db.execute_with_retry('''
+            DELETE FROM scheduled_reminders 
+            WHERE sent = TRUE AND scheduled_time < ?
+        ''', (seven_days_ago,))
+        deleted_count = cursor.rowcount
+        db.conn.commit()
+        
+        if deleted_count > 0:
+            logger.info(f"✅ Очищено {deleted_count} старых напоминаний")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при очистке старых напоминаний: {e}")
+
 async def debug_timezones(context: ContextTypes.DEFAULT_TYPE):
     """Отладочная функция для проверки временных зон"""
     try:
@@ -4495,6 +4515,14 @@ def setup_job_queue(application: Application):
     
     # 21:00 UTC = 00:00 MSK - Очистка неактивных пользователей
     job_queue.run_daily(cleanup_old_data, time=datetime.strptime("21:00", "%H:%M").time(), name="cleanup_old_data")
+    
+    # 21:00 UTC = 00:00 MSK - Очистка старых записей
+    job_queue.run_daily(cleanup_completed_appointments_daily, time=datetime.strptime("21:00", "%H:%M").time(), name="cleanup_old_appointments")
+    
+    # 22:00 UTC = 01:00 MSK - Очистка старых напоминаний
+    job_queue.run_daily(cleanup_old_reminders, time=datetime.strptime("22:00", "%H:%M").time(), name="cleanup_old_reminders")
+    
+    job_queue.run_once(cleanup_duplicate_reminders, when=10, name="cleanup_duplicate_reminders")
 
 def kill_duplicate_processes():
     """🎯 УЛУЧШЕННАЯ ЗАЩИТА ОТ ДУБЛИРУЮЩИХСЯ ПРОЦЕССОВ"""

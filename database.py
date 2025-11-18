@@ -677,33 +677,92 @@ class Database:
     def automatic_cleanup(self):
         """🎯 АВТОМАТИЧЕСКАЯ ОЧИСТКА ДЛЯ RENDER"""
         try:
-            # Очищаем прошедшие записи старше 8 дней
+            # Очищаем прошедшие записи
             cleanup_result = self.cleanup_completed_appointments()
             
-            # 🎯 Очищаем неактивных пользователей (120+ дней)
-            deleted_users = self.cleanup_inactive_users()
+            # Дополнительно: очищаем очень старые записи (> 14 дней) для экономии места
+            moscow_time = get_moscow_time()
+            cutoff_date_14_days = (moscow_time - timedelta(days=14)).strftime("%Y-%m-%d")
             
-            # 🎯 УДАЛЕНО: Очистка старых напоминаний больше не нужна
-            # Напоминания теперь удаляются сразу после отправки
+            cursor = self.execute_with_retry('''
+                DELETE FROM appointments 
+                WHERE appointment_date < ?
+            ''', (cutoff_date_14_days,))
+            deleted_old = cursor.rowcount
+            
+            # Очищаем старые напоминания
+            cutoff_datetime = (moscow_time - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM scheduled_reminders 
+                WHERE sent = TRUE AND scheduled_time < ?
+            ''', (cutoff_datetime,))
+            deleted_reminders = cursor.rowcount
+            
+            # Очищаем неактивных пользователей (не заходили 60 дней)
+            cutoff_users = (moscow_time - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = self.execute_with_retry('''
+                DELETE FROM bot_users 
+                WHERE last_seen < ?
+            ''', (cutoff_users,))
+            deleted_users = cursor.rowcount
             
             self.conn.commit()
             
-            total_deleted = (cleanup_result['total_deleted'] + deleted_users)
+            total_deleted = (cleanup_result['total_deleted'] + deleted_old + 
+                            deleted_reminders + deleted_users)
             
             logger.info(f"🧹 Автоочистка: удалено {total_deleted} записей "
-                       f"(записи: {cleanup_result['total_deleted']}, "
+                       f"(прошлые: {cleanup_result['total_deleted']}, "
+                       f"старые: {deleted_old}, "
+                       f"напоминания: {deleted_reminders}, "
                        f"пользователи: {deleted_users})")
             
             return {
                 'total_deleted': total_deleted,
-                'deleted_appointments': cleanup_result['total_deleted'],
-                'deleted_users': deleted_users,
-                'deleted_reminders': 0  # 🎯 Теперь всегда 0
+                'deleted_past_appointments': cleanup_result['total_deleted'],
+                'deleted_old_appointments': deleted_old,
+                'deleted_reminders': deleted_reminders,
+                'deleted_users': deleted_users
             }
             
         except Exception as e:
             logger.error(f"❌ Ошибка автоматической очистки: {e}")
             return {'total_deleted': 0}
+
+    def emergency_cleanup(self):
+        """Экстренная очистка при нехватке памяти БЕЗ УВЕДОМЛЕНИЙ"""
+        try:
+            logger.warning("🚨 ВЫПОЛНЯЕТСЯ ЭКСТРЕННАЯ ОЧИСТКА!")
+        
+            # Создаем backup перед очисткой (без уведомлений)
+            self.create_backup()
+        
+            # Удаляем очень старые записи (> 7 дней)
+            moscow_time = get_moscow_time()
+            cutoff_date = (moscow_time - timedelta(days=7)).strftime("%Y-%m-%d")
+        
+            cursor = self.execute_with_retry('''
+                DELETE FROM appointments 
+                WHERE appointment_date < ?
+            ''', (cutoff_date,))
+            deleted_appointments = cursor.rowcount
+        
+            # Очищаем старые backup метаданные
+            cursor = self.execute_with_retry('''
+                DELETE FROM backup_metadata 
+                WHERE timestamp < DATE('now', '-30 days')
+            ''')
+            deleted_backup_meta = cursor.rowcount
+        
+            self.conn.commit()
+        
+            logger.info(f"🚨 Экстренная очистка: удалено {deleted_appointments} записей, {deleted_backup_meta} backup метаданных")
+        
+            return deleted_appointments + deleted_backup_meta
+        
+        except Exception as e:
+            logger.error(f"❌ Ошибка экстренной очистки: {e}")
+            return 0
 
     def emergency_size_management(self):
         """🎯 ЭКСТРЕННОЕ УПРАВЛЕНИЕ РАЗМЕРОМ БД ПРИ ПРИБЛИЖЕНИИ К ЛИМИТУ"""
@@ -894,7 +953,7 @@ class Database:
         return schedule
 
     def get_user_appointments(self, user_id):
-        """Получает только будущие записи пользователя (включая админские ручные)"""
+        """Получает только будущие записи пользователя"""
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
@@ -912,7 +971,7 @@ class Database:
         return cursor.fetchall()
 
     def get_all_appointments(self):
-        """Получает только БУДУЩИЕ записи (включая все типы)"""
+        """Получает только БУДУЩИЕ записи"""
         moscow_time = get_moscow_time()
         current_date = moscow_time.strftime("%Y-%m-%d")
         current_time = moscow_time.strftime("%H:%M")
@@ -1026,22 +1085,17 @@ class Database:
         return cursor.fetchone()[0]
 
     def cleanup_completed_appointments(self):
-        """Очищает прошедшие записи старше 8 дней"""
+        """Очищает прошедшие записи"""
         moscow_time = get_moscow_time()
-        
-        # 🎯 Удаляем записи старше 8 дней
-        cutoff_date_8_days = (moscow_time - timedelta(days=8)).strftime("%Y-%m-%d")
+        current_date = moscow_time.strftime("%Y-%m-%d")
+        current_time = moscow_time.strftime("%H:%M")
         
         cursor = self.execute_with_retry('''
             DELETE FROM appointments 
             WHERE appointment_date < ?
-        ''', (cutoff_date_8_days,))
+        ''', (current_date,))
         
         deleted_past_dates = cursor.rowcount
-        
-        # 🎯 Удаляем прошедшие записи за сегодня
-        current_date = moscow_time.strftime("%Y-%m-%d")
-        current_time = moscow_time.strftime("%H:%M")
         
         cursor = self.execute_with_retry('''
             DELETE FROM appointments 
@@ -1051,11 +1105,10 @@ class Database:
         
         deleted_today = cursor.rowcount
         
-        # 🎯 Очищаем расписание
         self.execute_with_retry('''
             DELETE FROM schedule 
             WHERE date < ?
-        ''', (cutoff_date_8_days,))
+        ''', (current_date,))
         
         self.execute_with_retry('''
             DELETE FROM schedule 
@@ -1067,36 +1120,13 @@ class Database:
         total_deleted = deleted_past_dates + deleted_today
         
         if total_deleted > 0:
-            logger.info(f"✅ Автоочистка: удалено {total_deleted} прошедших записей (старше 8 дней)")
+            logger.info(f"✅ Автоочистка: удалено {total_deleted} прошедших записей")
         
         return {
             'deleted_past_dates': deleted_past_dates,
             'deleted_today': deleted_today,
             'total_deleted': total_deleted
         }
-
-    def cleanup_inactive_users(self):
-        """Удаляет пользователей не активных более 120 дней"""
-        try:
-            moscow_time = get_moscow_time()
-            cutoff_users = (moscow_time - timedelta(days=120)).strftime("%Y-%m-%d %H:%M:%S")
-            
-            cursor = self.execute_with_retry('''
-                DELETE FROM bot_users 
-                WHERE last_seen < ?
-            ''', (cutoff_users,))
-            
-            deleted_users = cursor.rowcount
-            self.conn.commit()
-            
-            if deleted_users > 0:
-                logger.info(f"🧹 Удалено {deleted_users} неактивных пользователей (старше 120 дней)")
-            
-            return deleted_users
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка очистки неактивных пользователей: {e}")
-            return 0
 
     def check_duplicate_appointments(self):
         """Проверяет дублирующиеся записи"""
@@ -1274,77 +1304,48 @@ class Database:
             return None
 
     def get_weekly_stats(self):
-        """🎯 Собирает статистику за прошедшую неделю (7 полных дней)"""
+        """Собирает статистика за прошедшую неделю"""
         try:
-            moscow_time = get_moscow_time()
-            end_date = moscow_time.date()  # Сегодня
-            start_date = end_date - timedelta(days=7)  # 7 дней назад
+            end_date = get_moscow_time().date()
+            start_date = end_date - timedelta(days=7)
             
-            # 🎯 Период 80 дней для постоянных клиентов
-            eighty_days_ago = (moscow_time - timedelta(days=80)).strftime("%Y-%m-%d")
-            
-            logger.info(f"📊 Формирование отчета за период: {start_date} - {end_date}")
-            
-            # 🎯 ВСЕГО ЗАПИСЕЙ (только прошедшие за период)
             cursor = self.execute_with_retry('''
                 SELECT COUNT(*) 
                 FROM appointments 
                 WHERE appointment_date >= ? AND appointment_date < ?
-                AND (appointment_date < ? OR (appointment_date = ? AND appointment_time < ?))
-            ''', (
-                start_date.strftime("%Y-%m-%d"), 
-                end_date.strftime("%Y-%m-%d"),
-                moscow_time.strftime("%Y-%m-%d"),
-                moscow_time.strftime("%Y-%m-%d"), 
-                moscow_time.strftime("%H:%M")
-            ))
+            ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
             total_appointments = cursor.fetchone()[0]
             
-            # 🎯 НОВЫЕ КЛИЕНТЫ (впервые записавшиеся за период 7 дней)
             cursor = self.execute_with_retry('''
-                SELECT COUNT(DISTINCT user_id)
+                SELECT appointment_time, COUNT(*) as count
                 FROM appointments 
                 WHERE appointment_date >= ? AND appointment_date < ?
-                AND user_id NOT IN (
-                    SELECT DISTINCT user_id 
-                    FROM appointments 
-                    WHERE appointment_date < ?
-                )
-            ''', (
-                start_date.strftime("%Y-%m-%d"), 
-                end_date.strftime("%Y-%m-%d"),
-                start_date.strftime("%Y-%m-%d")
-            ))
-            new_clients = cursor.fetchone()[0]
-            
-            # 🎯 ПОСТОЯННЫЕ КЛИЕНТЫ (2+ записей за 80 дней)
-            cursor = self.execute_with_retry('''
-                SELECT user_id, COUNT(*) as visit_count
-                FROM appointments 
-                WHERE appointment_date >= ? 
-                GROUP BY user_id 
-                HAVING COUNT(*) >= 2
-            ''', (eighty_days_ago,))
-            regular_clients = len(cursor.fetchall())
-            
-            logger.info(f"📊 Отчет: {total_appointments} записей, {new_clients} новых, {regular_clients} постоянных")
+                GROUP BY appointment_time 
+                ORDER BY count DESC 
+                LIMIT 1
+            ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")))
+            peak_time_result = cursor.fetchone()
+            peak_time = peak_time_result[0] if peak_time_result else "Нет данных"
+            peak_time_count = peak_time_result[1] if peak_time_result else 0
             
             return {
                 'start_date': start_date.strftime("%d.%m.%Y"),
                 'end_date': (end_date - timedelta(days=1)).strftime("%d.%m.%Y"),
                 'total_appointments': total_appointments,
-                'new_clients': new_clients,
-                'regular_clients': regular_clients
+                'peak_time': peak_time,
+                'peak_time_count': peak_time_count,
+                'new_clients': 0,
+                'regular_clients': 0
             }
             
         except Exception as e:
             logger.error(f"❌ Ошибка при сборе статистики: {e}")
-            import traceback
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return {
                 'start_date': '',
                 'end_date': '',
                 'total_appointments': 0,
+                'peak_time': "Нет данных",
+                'peak_time_count': 0,
                 'new_clients': 0,
                 'regular_clients': 0
             }
