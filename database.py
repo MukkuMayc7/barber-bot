@@ -341,12 +341,9 @@ class Database:
         
             backup_path = "/tmp/barbershop_latest_backup.db"
 
-            # 🎯 ДИАГНОСТИКА: ПРОВЕРЯЕМ ДОСТУПНОСТЬ /tmp/
-            logger.info(f"🔍 Проверка пути backup: {backup_path}")
-            logger.info(f"📁 Директория /tmp/ доступна: {os.path.exists('/tmp')}")
-        
             # 🎯 ВАЖНО: ДЕЛАЕМ COMMIT ПЕРЕД БЭКАПОМ
             self.conn.commit()
+            logger.info("✅ Транзакция закоммичена перед backup")
             
             # 🎯 ПРОВЕРЯЕМ РАЗМЕР ОСНОВНОЙ БД ПЕРЕД BACKUP
             original_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
@@ -366,6 +363,7 @@ class Database:
             # Копируем файл БД (перезаписываем существующий)
             import shutil
             shutil.copy2(self.db_path, backup_path)
+            logger.info("✅ Файл скопирован через shutil.copy2")
 
             # 🎯 ДИАГНОСТИКА: ПРОВЕРЯЕМ РЕЗУЛЬТАТ КОПИРОВАНИЯ
             if os.path.exists(backup_path):
@@ -377,32 +375,29 @@ class Database:
                     return None
                 
                 logger.info(f"📊 ДИАГНОСТИКА: оригинал={original_size} bytes, backup={backup_size} bytes")
+                
+                # 🎯 ПРОВЕРЯЕМ ЧТО BACKUP СОДЕРЖИТ ДАННЫЕ
+                try:
+                    import sqlite3
+                    test_conn = sqlite3.connect(backup_path)
+                    test_cursor = test_conn.cursor()
+                    test_cursor.execute('SELECT COUNT(*) FROM appointments')
+                    backup_appointments = test_cursor.fetchone()[0]
+                    test_cursor.execute('SELECT COUNT(*) FROM bot_users')
+                    backup_users = test_cursor.fetchone()[0]
+                    test_conn.close()
+                    
+                    logger.info(f"🔍 ПРОВЕРКА BACKUP: {backup_appointments} записей, {backup_users} пользователей")
+                    
+                    if backup_appointments == 0:
+                        logger.error("❌ Backup файл создан, но не содержит записей!")
+                        return None
+                        
+                except Exception as e:
+                    logger.error(f"❌ Ошибка проверки backup файла: {e}")
+                    return None
             else:
                 logger.error("❌ Бэкап файл не создался после shutil.copy2!")
-                return None
-        
-            # Проверяем что бэкап создался и не пустой
-            if os.path.exists(backup_path):
-                backup_size = os.path.getsize(backup_path)
-                if backup_size == 0:
-                    logger.error("❌ Бэкап файл пустой!")
-                    return None
-                    
-                logger.info(f"✅ Бэкап создан/обновлен: {backup_size} bytes")
-                
-                # 🎯 ДЕТАЛЬНАЯ ДИАГНОСТИКА
-                logger.info(f"📊 ДИАГНОСТИКА: оригинал={original_size} bytes, backup={backup_size} bytes")
-                
-                if backup_size < 1000:  # Меньше 1KB - подозрительно
-                    logger.warning(f"⚠️ Backup файл слишком мал: {backup_size} bytes")
-                    # Проверим содержимое таблиц
-                    cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
-                    appt_count = cursor.fetchone()[0]
-                    cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users') 
-                    user_count = cursor.fetchone()[0]
-                    logger.info(f"📊 Данные в БД: записей={appt_count}, пользователей={user_count}")
-            else:
-                logger.error("❌ Бэкап файл не создался!")
                 return None
         
             # Сохраняем информацию о backup в БД
@@ -421,7 +416,7 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка создания локального backup: {e}")
             import traceback
-            logger.error(f"❌ Traceback: {traceback.format_exc()}")  # 🎯 ДОБАВЛЕНО ДЛЯ ДИАГНОСТИКИ
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
         
             try:
                 cursor = self.execute_with_retry('''
@@ -827,9 +822,12 @@ class Database:
                 VALUES (?, ?, ?)
             ''', (date, time, False))
         
-            # 🎯 ВАЖНО: КОММИТИМ ТРАНЗАКЦИЮ
+            # 🎯 ВАЖНО: КОММИТИМ ТРАНЗАКЦИЮ И СИНХРОНИЗИРУЕМ
             self.conn.commit()
-            logger.info("✅ Транзакция закоммичена")
+            
+            # 🎯 ПРИНУДИТЕЛЬНАЯ СИНХРОНИЗАЦИЯ ДЛЯ SQLite
+            self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            logger.info("✅ Транзакция закоммичена и синхронизирована")
         
             # 🎯 ПРОВЕРЯЕМ ЧТО ЗАПИСЬ ДЕЙСТВИТЕЛЬНО СОХРАНИЛАСЬ
             cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments WHERE id = ?', (appointment_id,))
