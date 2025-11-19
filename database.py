@@ -53,6 +53,16 @@ class Database:
         self.db_path = get_database_path()
         self.last_backup_time = None
         self.backup_enabled = True
+        
+        # 🎯 ДОБАВЛЯЕМ ДЕТАЛЬНУЮ ДИАГНОСТИКУ ПРИ ИНИЦИАЛИЗАЦИИ
+        logger.info("🎯 ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ")
+        logger.info(f"📁 Путь к БД: {self.db_path}")
+        logger.info(f"📊 Файл существует: {os.path.exists(self.db_path)}")
+        
+        if os.path.exists(self.db_path):
+            size = os.path.getsize(self.db_path)
+            logger.info(f"📏 Размер БД: {size} bytes ({size/1024/1024:.2f} MB)")
+        
         self.reconnect()
     
     def reconnect(self):
@@ -132,42 +142,171 @@ class Database:
                 raise
 
     def has_data(self):
-        """Проверяет, есть ли РЕАЛЬНЫЕ данные в БД"""
+        """🎯 ИСПРАВЛЕННАЯ ПРОВЕРКА НАЛИЧИЯ ДАННЫХ В БД"""
         try:
-            # 🎯 ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ФАЙЛА И ТАБЛИЦ
             if not os.path.exists(self.db_path):
                 logger.info("🔍 Файл БД не существует - данных нет")
+                return False
+            
+            # Проверяем размер файла
+            file_size = os.path.getsize(self.db_path)
+            if file_size < 1024:  # Меньше 1KB - считаем пустой
+                logger.info("🔍 Файл БД слишком мал - считаем пустым")
                 return False
             
             # Пробуем подключиться и проверить таблицы
             test_conn = sqlite3.connect(self.db_path)
             cursor = test_conn.cursor()
-        
-            # Проверяем существование таблиц
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='appointments'")
-            if not cursor.fetchone():
-                logger.info("🔍 Таблица appointments не существует - данных нет")
+            
+            # Проверяем существование основных таблиц
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in cursor.fetchall()]
+            
+            required_tables = ['appointments', 'bot_users', 'bot_admins']
+            missing_tables = [table for table in required_tables if table not in tables]
+            
+            if missing_tables:
+                logger.info(f"🔍 Отсутствуют таблицы: {missing_tables}")
                 test_conn.close()
                 return False
             
-            # Проверяем реальные данные
+            # Проверяем реальные данные в appointments
             cursor.execute('SELECT COUNT(*) FROM appointments')
             appointments_count = cursor.fetchone()[0]
-        
+            
             cursor.execute('SELECT COUNT(*) FROM bot_users')
             users_count = cursor.fetchone()[0]
-        
+            
             test_conn.close()
-        
+            
             has_real_data = appointments_count > 0
-        
-            logger.info(f"🔍 ПРОВЕРКА ДАННЫХ: файл существует, записей={appointments_count}, пользователей={users_count}, есть_данные={has_real_data}")
-        
+            
+            logger.info(f"🔍 ПРОВЕРКА ДАННЫХ: таблиц={len(tables)}, записей={appointments_count}, пользователей={users_count}, есть_данные={has_real_data}")
+            
             return has_real_data
-        
+            
         except Exception as e:
             logger.error(f"❌ Ошибка при проверке данных в БД: {e}")
-            # При ошибке считаем что данных нет - можно восстанавливать
+            return False
+
+    def restore_from_backup(self):
+        """🎯 УЛУЧШЕННОЕ ВОССТАНОВЛЕНИЕ ИЗ BACKUP"""
+        try:
+            if not self.backup_enabled:
+                logger.info("⏩ Восстановление отключено")
+                return False
+        
+            backup_path = "/tmp/barbershop_latest_backup.db"
+        
+            if not os.path.exists(backup_path):
+                logger.info("⏩ Нет backup файла для восстановления")
+                return False
+        
+            # 🎯 ПРОВЕРЯЕМ ЦЕЛОСТЬ BACKUP ФАЙЛА
+            backup_size = os.path.getsize(backup_path)
+            logger.info(f"🔍 Размер backup файла: {backup_size} bytes")
+        
+            if backup_size < 1024:  # Меньше 1KB
+                logger.error("❌ Backup файл слишком мал - вероятно поврежден")
+                return False
+        
+            # 🎯 ПРОВЕРЯЕМ СОДЕРЖИМОЕ BACKUP ФАЙЛА
+            try:
+                import sqlite3
+                test_conn = sqlite3.connect(backup_path)
+                cursor = test_conn.cursor()
+            
+                # Проверяем основные таблицы в backup
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                backup_tables = [row[0] for row in cursor.fetchall()]
+                
+                required_tables = ['appointments', 'bot_users', 'bot_admins']
+                missing_tables = [table for table in required_tables if table not in backup_tables]
+                
+                if missing_tables:
+                    logger.error(f"❌ Backup файл не содержит необходимые таблицы: {missing_tables}")
+                    test_conn.close()
+                    return False
+                
+                # Проверяем данные в backup
+                cursor.execute('SELECT COUNT(*) FROM appointments')
+                backup_appointments = cursor.fetchone()[0]
+            
+                cursor.execute('SELECT COUNT(*) FROM bot_users')
+                backup_users = cursor.fetchone()[0]
+            
+                test_conn.close()
+            
+                logger.info(f"🔍 Данные в backup: таблиц={len(backup_tables)}, записей={backup_appointments}, пользователей={backup_users}")
+            
+                if backup_appointments == 0:
+                    logger.info("⏩ Backup файл не содержит записей - восстановление не требуется")
+                    return False
+                
+            except sqlite3.DatabaseError as e:
+                logger.error(f"❌ Backup файл поврежден: {e}")
+                return False
+            
+            logger.info(f"🔄 Восстанавливаем из backup: {backup_path} ({backup_size} bytes)")
+        
+            # 🎯 ЗАКРЫВАЕМ СОЕДИНЕНИЕ ПРАВИЛЬНО
+            if self.conn:
+                try:
+                    self.conn.close()
+                except:
+                    pass
+                self.conn = None
+        
+            # 🎯 СОЗДАЕМ РЕЗЕРВНУЮ КОПИЮ ТЕКУЩЕЙ БД (НА ВСЯКИЙ СЛУЧАЙ)
+            try:
+                if os.path.exists(self.db_path):
+                    backup_current = f"{self.db_path}.backup_before_restore"
+                    import shutil
+                    shutil.copy2(self.db_path, backup_current)
+                    logger.info(f"✅ Создана резервная копия текущей БД: {backup_current}")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось создать резервную копию текущей БД: {e}")
+        
+            # 🎯 УДАЛЯЕМ СТАРУЮ БД ЕСЛИ СУЩЕСТВУЕТ
+            try:
+                if os.path.exists(self.db_path):
+                    os.remove(self.db_path)
+                    logger.info("✅ Старая БД удалена")
+            except Exception as e:
+                logger.error(f"❌ Ошибка удаления старой БД: {e}")
+                return False
+        
+            # Копируем backup
+            import shutil
+            shutil.copy2(backup_path, self.db_path)
+            logger.info("✅ Бэкап скопирован")
+        
+            # 🎯 ПЕРЕСОЗДАЕМ СОЕДИНЕНИЕ К НОВОЙ БД
+            self.reconnect()
+        
+            # 🎯 ПРОВЕРЯЕМ ЧТО ДАННЫЕ ВОССТАНОВИЛИСЬ
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM appointments')
+            restored_appointments = cursor.fetchone()[0]
+        
+            cursor = self.execute_with_retry('SELECT COUNT(*) FROM bot_users')
+            restored_users = cursor.fetchone()[0]
+        
+            logger.info(f"✅ Восстановление завершено! Записей: {restored_appointments}, пользователей: {restored_users}")
+        
+            return True
+        
+        except Exception as e:
+            logger.error(f"❌ Ошибка при восстановлении из backup: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        
+            # Пытаемся восстановить оригинальную БД
+            try:
+                self.reconnect()
+                logger.info("✅ Восстановлено соединение с оригинальной БД")
+            except:
+                logger.error("❌ Не удалось восстановить соединение с БД")
+            
             return False
 
     def execute_with_retry(self, query, params=()):

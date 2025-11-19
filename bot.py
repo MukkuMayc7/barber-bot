@@ -678,11 +678,11 @@ def get_main_keyboard(user_id):
     keyboard = []
     
     if db.is_admin(user_id):
-        # Клавиатура для администратора - ИСПРАВЛЕННЫЕ НАЗВАНИЯ
+        # 🎯 ИСПРАВЛЕННАЯ КЛАВИАТУРА ДЛЯ АДМИНИСТРАТОРА
         keyboard = [
             [KeyboardButton("📝 Записать клиента вручную")],
             [KeyboardButton("🗓️ График работы")],
-            [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],
+            [KeyboardButton("📋 Мои записи"), KeyboardButton("❌ Отменить запись")],  # 🎯 ИСПРАВЛЕНО
             [KeyboardButton("📊 Записи сегодня"), KeyboardButton("📅 Записи на неделю"), KeyboardButton("👑 Все записи")],
             [KeyboardButton("📈 Статистика"), KeyboardButton("👥 Управление администраторами")]
         ]
@@ -784,7 +784,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await make_appointment_start(update, context, is_admin=True)
         elif text == "👑 Все записи":
             await show_all_appointments(update, context)
-        elif text == "📋 Мои записи":
+        elif text == "📋 Мои записи":  # 🎯 ДОБАВЛЕНО
             await show_admin_manual_appointments(update, context)
         elif text == "📊 Записи сегодня":
             await show_today_appointments_visual(update, context)
@@ -792,7 +792,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_week_appointments(update, context)
         elif text == "📈 Статистика":
             await show_statistics(update, context)
-        elif text == "❌ Отменить запись":
+        elif text == "❌ Отменить запись":  # 🎯 ДОБАВЛЕНО
             await show_cancel_appointment(update, context)
         elif text == "🗓️ График работы":
             await manage_schedule(update, context)
@@ -1688,13 +1688,14 @@ async def debug_jobs(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Ошибка в debug_jobs: {e}")
 
 async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Восстанавливает запланированные напоминания из БД при запуске бота"""
+    """🎯 УЛУЧШЕННОЕ ВОССТАНОВЛЕНИЕ НАПОМИНАНИЙ ИЗ БД"""
     try:
         cursor = db.execute_with_retry('''
-            SELECT sr.appointment_id, sr.reminder_type, sr.scheduled_time, a.user_id 
+            SELECT sr.appointment_id, sr.reminder_type, sr.scheduled_time, a.user_id, a.appointment_date, a.appointment_time
             FROM scheduled_reminders sr
             JOIN appointments a ON sr.appointment_id = a.id
-            WHERE sr.sent = FALSE AND sr.scheduled_time > CURRENT_TIMESTAMP
+            WHERE sr.sent = FALSE 
+            AND datetime(sr.scheduled_time) > datetime('now')
             ORDER BY sr.scheduled_time
         ''')
         
@@ -1703,10 +1704,22 @@ async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
         
         current_moscow = get_moscow_time()
         restored_count = 0
+        skipped_count = 0
         
-        for appointment_id, reminder_type, scheduled_time, user_id in reminders:
+        for reminder in reminders:
             try:
-                # Убеждаемся, что время в правильном часовом поясе
+                appointment_id, reminder_type, scheduled_time, user_id, appointment_date, appointment_time = reminder
+                
+                # 🎯 ПРОВЕРЯЕМ ЧТО ЗАПИСЬ ВСЕ ЕЩЕ СУЩЕСТВУЕТ
+                cursor_check = db.execute_with_retry('SELECT id FROM appointments WHERE id = ?', (appointment_id,))
+                if not cursor_check.fetchone():
+                    logger.warning(f"⚠️ Запись #{appointment_id} не найдена, пропускаем напоминание")
+                    continue
+                
+                # 🎯 УБЕЖДАЕМСЯ ЧТО ВРЕМЯ В ПРАВИЛЬНОМ ЧАСОВОМ ПОЯСЕ
+                if isinstance(scheduled_time, str):
+                    scheduled_time = datetime.fromisoformat(scheduled_time)
+                
                 if scheduled_time.tzinfo is None:
                     scheduled_time = scheduled_time.replace(tzinfo=timezone(timedelta(hours=3)))
                 
@@ -1718,29 +1731,42 @@ async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"   ⏰ Запланировано на: {scheduled_time.strftime('%d.%m.%Y %H:%M')} MSK")
                 logger.info(f"   ⏳ Осталось секунд: {time_until_reminder}")
                 
-                if time_until_reminder > 0:
+                if time_until_reminder > 60:  # Минимум 1 минута до напоминания
                     if reminder_type == '24h':
+                        # Удаляем существующую задачу если есть
+                        job_name = f"24h_reminder_{appointment_id}"
+                        existing_jobs = context.job_queue.get_jobs_by_name(job_name)
+                        for job in existing_jobs:
+                            job.schedule_removal()
+                        
                         context.job_queue.run_once(
                             callback=send_single_24h_reminder,
                             when=scheduled_utc,
                             data={'appointment_id': appointment_id, 'user_id': user_id},
-                            name=f"24h_reminder_{appointment_id}"
+                            name=job_name
                         )
                         restored_count += 1
                         logger.info(f"✅ Восстановлено 24h напоминание для #{appointment_id}")
                     elif reminder_type == '1h':
+                        # Удаляем существующую задачу если есть
+                        job_name = f"1h_reminder_{appointment_id}"
+                        existing_jobs = context.job_queue.get_jobs_by_name(job_name)
+                        for job in existing_jobs:
+                            job.schedule_removal()
+                        
                         context.job_queue.run_once(
                             callback=send_single_1h_reminder,
                             when=scheduled_utc,
                             data={'appointment_id': appointment_id, 'user_id': user_id},
-                            name=f"1h_reminder_{appointment_id}"
+                            name=job_name
                         )
                         restored_count += 1
                         logger.info(f"✅ Восстановлено 1h напоминание для #{appointment_id}")
                 else:
-                    logger.info(f"⏩ Пропущено восстановление {reminder_type} напоминания для #{appointment_id} (время прошло)")
+                    logger.info(f"⏩ Пропущено восстановление {reminder_type} напоминания для #{appointment_id} (время прошло или слишком близко)")
+                    skipped_count += 1
                     # Помечаем как отправленное, чтобы больше не восстанавливать
-                    cursor = db.execute_with_retry('''
+                    cursor_update = db.execute_with_retry('''
                         UPDATE scheduled_reminders 
                         SET sent = TRUE 
                         WHERE appointment_id = ? AND reminder_type = ?
@@ -1749,13 +1775,59 @@ async def restore_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE):
                 
             except Exception as e:
                 logger.error(f"❌ Ошибка при восстановлении напоминания для записи #{appointment_id}: {e}")
+                skipped_count += 1
         
-        logger.info(f"✅ Всего восстановлено напоминаний: {restored_count}")
+        logger.info(f"✅ Восстановление напоминаний завершено: {restored_count} восстановлено, {skipped_count} пропущено")
+        
+        # 🎯 ДОПОЛНИТЕЛЬНО: ВОССТАНАВЛИВАЕМ НАПОМИНАНИЯ ДЛЯ ЗАПИСЕЙ БЕЗ ЗАПЛАНИРОВАННЫХ НАПОМИНАНИЙ
+        await restore_missing_reminders(context)
         
     except Exception as e:
         logger.error(f"❌ Ошибка при восстановлении напоминаний из БД: {e}")
         import traceback
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+async def restore_missing_reminders(context: ContextTypes.DEFAULT_TYPE):
+    """🎯 ВОССТАНАВЛИВАЕТ НАПОМИНАНИЯ ДЛЯ ЗАПИСЕЙ, У КОТОРЫХ ИХ НЕТ В БД"""
+    try:
+        current_moscow = get_moscow_time()
+        
+        # Находим записи без напоминаний в ближайшие 48 часов
+        cursor = db.execute_with_retry('''
+            SELECT a.id, a.user_id, a.appointment_date, a.appointment_time
+            FROM appointments a
+            WHERE a.appointment_date >= DATE('now')
+            AND a.appointment_date <= DATE('now', '+2 days')
+            AND NOT EXISTS (
+                SELECT 1 FROM scheduled_reminders sr 
+                WHERE sr.appointment_id = a.id AND sr.sent = FALSE
+            )
+            ORDER BY a.appointment_date, a.appointment_time
+        ''')
+        
+        appointments_without_reminders = cursor.fetchall()
+        restored_count = 0
+        
+        for appointment in appointments_without_reminders:
+            appointment_id, user_id, date, time = appointment
+            
+            # Пропускаем записи администратора
+            cursor_user = db.execute_with_retry('SELECT user_name FROM appointments WHERE id = ?', (appointment_id,))
+            user_name = cursor_user.fetchone()[0] if cursor_user.fetchone() else ""
+            
+            if user_name == "Администратор":
+                continue
+                
+            # Планируем напоминания
+            await schedule_appointment_reminders(context, appointment_id, date, time, user_id)
+            restored_count += 1
+            logger.info(f"✅ Восстановлены напоминания для записи #{appointment_id}")
+        
+        if restored_count > 0:
+            logger.info(f"✅ Восстановлено напоминаний для {restored_count} записей")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при восстановлении отсутствующих напоминаний: {e}")
 
 def cancel_scheduled_reminders(context: ContextTypes.DEFAULT_TYPE, appointment_id: int):
     """Удаляет запланированные напоминания для отмененной записи"""
